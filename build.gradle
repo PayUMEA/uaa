@@ -80,12 +80,20 @@ subprojects {
   }
 
 
-    task packageSources(type: Jar) {
+  task packageSources(type: Jar) {
     classifier = 'sources'
     from sourceSets.main.allSource
-
   }
-  artifacts.archives packageSources
+
+  task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier 'javadoc'
+    from javadoc.destinationDir
+  }
+
+  artifacts {
+    archives packageSources
+    archives javadocJar
+  }
   repositories {
     maven { url "http://maven.springframework.org/release" }
     maven { url "http://maven.springframework.org/milestone" }
@@ -95,19 +103,65 @@ subprojects {
     maven { url "http://repo.maven.apache.org/maven2" }
   }
 
-  apply plugin: 'artifactory'
-
-  artifactoryPublish {
-    publish {
-      contextUrl = "http://repo.spring.io"
-      repository {
-        repoKey = version.endsWith('-SNAPSHOT') ? 'libs-snapshot-local' : 'libs-release-local'
-        username = project.hasProperty('artifactory_user') ? "${artifactory_user}" : ""
-        password = project.hasProperty('artifactory_password') ? "${artifactory_password}" : ""
-        maven = true
+  install {
+    repositories.mavenInstaller {
+      pom.project {
+        name 'UAA'
+        description 'Cloud Foundry User Account and Authentication'
+        url 'http://github.com//cloudfoundry/uaa'
+        inceptionYear '2011'
+        licenses {
+          license {
+            name 'The Apache License, Version 2.0'
+            url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+            distribution 'repo'
+          }
+        }
+        scm {
+          connection 'scm:git:git@github.com:cloudfoundry/uaa.git'
+          developerConnection 'scm:git:git@github.com:cloudfoundry/uaa.git'
+          url 'https://github.com/cloudfoundry/uaa'
+        }
+        developers {
+          developer {
+            id 'fhanik'
+            name 'Filip Hanik'
+            roles {
+              role 'Developer'
+            }
+          }
+          developer {
+            id 'mbhave'
+            name 'Madhura Bhave'
+            roles {
+              role 'Developer'
+            }
+          }
+          developer {
+            id 'cdutra'
+            name 'Chris Dutra'
+            roles{
+              role 'Developer'
+            }
+          }
+        }
       }
     }
   }
+
+//  apply plugin: 'artifactory'
+//
+//  artifactoryPublish {
+//    publish {
+//      contextUrl = "http://repo.spring.io"
+//      repository {
+//        repoKey = version.endsWith('-SNAPSHOT') ? 'libs-snapshot-local' : 'libs-release-local'
+//        username = project.hasProperty('artifactory_user') ? "${artifactory_user}" : ""
+//        password = project.hasProperty('artifactory_password') ? "${artifactory_password}" : ""
+//        maven = true
+//      }
+//    }
+//  }
 
   sourceSets {
     instrumented

@@ -180,15 +180,15 @@ public class TokenMvcMockTests extends TestClassNullifier {
     }
     private IdentityProvider setupIdentityProvider(String origin) {
         IdentityProvider defaultIdp = new IdentityProvider();
-        defaultIdp.setName("internal");
-        defaultIdp.setType("internal");
+        defaultIdp.setName(origin);
+        defaultIdp.setType(origin);
         defaultIdp.setOriginKey(origin);
         defaultIdp.setIdentityZoneId(IdentityZoneHolder.get().getId());
         return identityProviderProvisioning.create(defaultIdp);
     }
 
     protected void setUpClients(String id, String authorities, String scopes, String grantTypes, Boolean autoapprove) {
-        setUpClients(id,authorities,scopes,grantTypes,autoapprove,null);
+        setUpClients(id, authorities, scopes, grantTypes, autoapprove, null);
     }
     protected void setUpClients(String id, String authorities, String scopes, String grantTypes, Boolean autoapprove, String redirectUri) {
         setUpClients(id, authorities, scopes, grantTypes, autoapprove, redirectUri, null);
@@ -258,7 +258,7 @@ public class TokenMvcMockTests extends TestClassNullifier {
     }
 
     @Test
-    public void testClientIdentityProviderRestrictionInEffectInAnotherZoneForClientWithoutAllowedProvidersForPasswordGrant() throws Exception {
+    public void testClientIdentityProviderWithoutAllowedProvidersForPasswordGrantWorksInOtherZone() throws Exception {
         String scopes = "space.*.developer,space.*.admin,org.*.reader,org.123*.admin,*.*,*,openid";
 
         //a client without allowed providers in non default zone should always be rejected
@@ -286,7 +286,7 @@ public class TokenMvcMockTests extends TestClassNullifier {
             .param(OAuth2Utils.GRANT_TYPE, "password")
             .param(OAuth2Utils.CLIENT_ID, clientId))
             .andDo(print())
-            .andExpect(status().isUnauthorized());
+            .andExpect(status().isOk());
 
         mockMvc.perform(post("/oauth/token")
             .with(new SetServerNameRequestPostProcessor(subdomain+".localhost"))
@@ -304,7 +304,7 @@ public class TokenMvcMockTests extends TestClassNullifier {
 
 
     @Test
-    public void testClientIdentityProviderRestrictionInEffectInAnotherZoneForClientWithoutAllowedProvidersForAuthCodeAlreadyLoggedIn() throws Exception {
+    public void testClientIdentityProviderClientWithoutAllowedProvidersForAuthCodeAlreadyLoggedInWorksInAnotherZone() throws Exception {
         //a client without allowed providers in non default zone should always be rejected
         String subdomain = "testzone"+new RandomValueStringGenerator().generate();
         IdentityZone testZone = setupIdentityZone(subdomain);
@@ -318,6 +318,9 @@ public class TokenMvcMockTests extends TestClassNullifier {
 
         String clientId2 = "testclient"+new RandomValueStringGenerator().generate();
         setUpClients(clientId2, scopes, scopes, "authorization_code,password", true, TEST_REDIRECT_URI, Arrays.asList(provider.getOriginKey()));
+
+        String clientId3 = "testclient"+new RandomValueStringGenerator().generate();
+        setUpClients(clientId3, scopes, scopes, "authorization_code,password", true, TEST_REDIRECT_URI, Arrays.asList(Origin.LOGIN_SERVER));
 
         String username = "testuser"+new RandomValueStringGenerator().generate();
         String userScopes = "space.1.developer,space.2.developer,org.1.reader,org.2.reader,org.12345.admin,scope.one,scope.two,scope.three,openid";
@@ -336,6 +339,7 @@ public class TokenMvcMockTests extends TestClassNullifier {
         String state = new RandomValueStringGenerator().generate();
         IdentityZoneHolder.clear();
 
+        //no providers is ok
         mockMvc.perform(get("/oauth/authorize")
             .session(session)
             .with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"))
@@ -343,10 +347,9 @@ public class TokenMvcMockTests extends TestClassNullifier {
             .param(OAuth2Utils.STATE, state)
             .param(OAuth2Utils.CLIENT_ID, clientId)
             .param(OAuth2Utils.REDIRECT_URI, TEST_REDIRECT_URI))
-            .andDo(print()).andExpect(status().isUnauthorized())
-            .andExpect(model().attributeExists("error"))
-            .andExpect(model().attribute("error_message_code","login.invalid_idp"));
+            .andDo(print()).andExpect(status().isFound());
 
+        //correct provider is ok
         MvcResult result = mockMvc.perform(get("/oauth/authorize")
             .session(session)
             .with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"))
@@ -356,6 +359,18 @@ public class TokenMvcMockTests extends TestClassNullifier {
             .param(OAuth2Utils.REDIRECT_URI, TEST_REDIRECT_URI))
             .andDo(print()).andExpect(status().isFound())
             .andReturn();
+
+        //other provider, not ok
+        mockMvc.perform(get("/oauth/authorize")
+            .session(session)
+            .with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"))
+            .param(OAuth2Utils.RESPONSE_TYPE, "code")
+            .param(OAuth2Utils.STATE, state)
+            .param(OAuth2Utils.CLIENT_ID, clientId3)
+            .param(OAuth2Utils.REDIRECT_URI, TEST_REDIRECT_URI))
+            .andDo(print()).andExpect(status().isUnauthorized())
+            .andExpect(model().attributeExists("error"))
+            .andExpect(model().attribute("error_message_code","login.invalid_idp"));
 
 
         URL url = new URL(result.getResponse().getHeader("Location").replace("redirect#","redirect?"));
@@ -423,8 +438,8 @@ public class TokenMvcMockTests extends TestClassNullifier {
         SecurityContextHolder.getContext().setAuthentication(auth);
         MockHttpSession session = new MockHttpSession();
         session.setAttribute(
-                HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
-                new MockSecurityContext(auth)
+            HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
+            new MockSecurityContext(auth)
         );
 
         String state = new RandomValueStringGenerator().generate();
@@ -605,6 +620,54 @@ public class TokenMvcMockTests extends TestClassNullifier {
         location = location.substring(0,location.indexOf("&code="));
         assertEquals(redirectUri, location);
     }
+
+    @Test
+    public void testImplicitGrantWithFragmentInRedirectURL() throws Exception {
+        String redirectUri = "https://example.com/dashboard/?appGuid=app-guid#test";
+        testImplicitGrantRedirectUri(redirectUri, "&");
+    }
+
+    @Test
+    public void testImplicitGrantWithNoFragmentInRedirectURL() throws Exception {
+        String redirectUri = "https://example.com/dashboard/?appGuid=app-guid";
+        testImplicitGrantRedirectUri(redirectUri, "#");
+    }
+
+    protected void testImplicitGrantRedirectUri(String redirectUri, String delim) throws Exception {
+        String clientId = "authclient-"+new RandomValueStringGenerator().generate();
+        String scopes = "openid";
+        setUpClients(clientId, scopes, scopes, GRANT_TYPES, true, redirectUri);
+        String username = "authuser"+new RandomValueStringGenerator().generate();
+        String userScopes = "openid";
+        ScimUser developer = setUpUser(username, userScopes);
+        String basicDigestHeaderValue = "Basic "
+            + new String(org.apache.commons.codec.binary.Base64.encodeBase64((clientId + ":" + SECRET).getBytes()));
+        UaaPrincipal p = new UaaPrincipal(developer.getId(),developer.getUserName(),developer.getPrimaryEmail(), Origin.UAA,"", IdentityZoneHolder.get().getId());
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(p, "", UaaAuthority.USER_AUTHORITIES);
+        Assert.assertTrue(auth.isAuthenticated());
+
+        SecurityContextHolder.getContext().setAuthentication(auth);
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(
+            HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
+            new MockSecurityContext(auth)
+        );
+
+        String state = new RandomValueStringGenerator().generate();
+        MockHttpServletRequestBuilder authRequest = get("/oauth/authorize")
+            .header("Authorization", basicDigestHeaderValue)
+            .session(session)
+            .param(OAuth2Utils.RESPONSE_TYPE, "token")
+            .param(OAuth2Utils.SCOPE, "openid")
+            .param(OAuth2Utils.STATE, state)
+            .param(OAuth2Utils.CLIENT_ID, clientId)
+            .param(OAuth2Utils.REDIRECT_URI, redirectUri);
+
+        MvcResult result = mockMvc.perform(authRequest).andExpect(status().is3xxRedirection()).andReturn();
+        String location = result.getResponse().getHeader("Location");
+        assertTrue(location.startsWith(redirectUri + delim + "token_type=bearer&access_token"));
+    }
+
 
     @Test
     public void testOpenIdToken() throws Exception {
