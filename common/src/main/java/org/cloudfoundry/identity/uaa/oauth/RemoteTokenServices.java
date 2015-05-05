@@ -47,6 +47,8 @@ import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestOperations;
 import org.springframework.web.client.RestTemplate;
 
+import com.googlecode.flyway.core.util.StringUtils;
+
 /**
  * Queries the /check_token endpoint to obtain the contents of an access token.
  *
@@ -201,7 +203,18 @@ public class RemoteTokenServices implements ResourceServerTokenServices {
         }
         String email = (String) map.get("email");
         String id = (String) map.get("user_id");
-        return new RemoteUserAuthentication(id, username, email, userAuthorities);
+        
+        RemoteUserAuthentication authentication = new RemoteUserAuthentication(id, username, email, userAuthorities);        
+        
+        Map<String, Object> details = new HashMap<>();
+        if (map.containsKey("user_stores")) {
+        	@SuppressWarnings("unchecked")
+			Collection<String> values = (Collection<String>) map.get("user_stores");
+        	details.put("userStoreIds", values);        	 
+        	authentication.setDetails(details);
+        }        
+                
+        return authentication;
     }
 
     @Override
@@ -216,7 +229,7 @@ public class RemoteTokenServices implements ResourceServerTokenServices {
         }
         return result;
     }
-
+    
     private String getAuthorizationHeader(String clientId, String clientSecret) {
         String creds = String.format("%s:%s", clientId, clientSecret);
         try {
