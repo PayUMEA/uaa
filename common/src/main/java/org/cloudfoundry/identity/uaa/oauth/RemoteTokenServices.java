@@ -47,8 +47,6 @@ import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestOperations;
 import org.springframework.web.client.RestTemplate;
 
-import com.googlecode.flyway.core.util.StringUtils;
-
 /**
  * Queries the /check_token endpoint to obtain the contents of an access token.
  *
@@ -210,7 +208,7 @@ public class RemoteTokenServices implements ResourceServerTokenServices {
         if (map.containsKey("user_stores")) {
         	@SuppressWarnings("unchecked")
 			Collection<String> values = (Collection<String>) map.get("user_stores");
-        	details.put("userStoreIds", values);        	 
+        	details.put("user_stores", values);        	 
         	authentication.setDetails(details);
         }        
                 
