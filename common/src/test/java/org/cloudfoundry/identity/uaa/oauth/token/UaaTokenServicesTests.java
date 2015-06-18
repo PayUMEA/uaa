@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -12,6 +12,7 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.oauth.token;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.cloudfoundry.identity.uaa.audit.AuditEvent;
 import org.cloudfoundry.identity.uaa.audit.AuditEventType;
 import org.cloudfoundry.identity.uaa.audit.event.TokenIssuedEvent;
@@ -28,10 +29,9 @@ import org.cloudfoundry.identity.uaa.test.TestApplicationEventPublisher;
 import org.cloudfoundry.identity.uaa.user.InMemoryUaaUserDatabase;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
 import org.cloudfoundry.identity.uaa.user.UaaUser;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.zone.IdentityZone;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.type.TypeReference;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -74,7 +74,7 @@ import static org.mockito.Mockito.mock;
 /**
  * @author Filip Hanik
  * @author Joel D'sa
- * 
+ *
  */
 public class UaaTokenServicesTests {
 
@@ -100,8 +100,7 @@ public class UaaTokenServicesTests {
     private TestApplicationEventPublisher<TokenIssuedEvent> publisher;
     private UaaTokenServices tokenServices = new UaaTokenServices();
     private SignerProvider signerProvider = new SignerProvider();
-    private ObjectMapper mapper = new ObjectMapper();
-    
+
     private List<GrantedAuthority> defaultUserAuthorities = Arrays.asList(
         UaaAuthority.authority("space.123.developer"),
         UaaAuthority.authority("uaa.user"),
@@ -114,20 +113,21 @@ public class UaaTokenServicesTests {
     private final String externalId = "externalId";
     private UaaUser defaultUser =
         new UaaUser(
-            userId, 
-            username, 
-            PASSWORD, 
+            userId,
+            username,
+            PASSWORD,
             email,
-            defaultUserAuthorities  , 
-            null, 
-            null, 
-            new Date(System.currentTimeMillis() - 15000), 
-            new Date(System.currentTimeMillis() - 15000), 
-            Origin.UAA, 
+            defaultUserAuthorities  ,
+            null,
+            null,
+            new Date(System.currentTimeMillis() - 15000),
+            new Date(System.currentTimeMillis() - 15000),
+            Origin.UAA,
             externalId,
             false,
-            IdentityZoneHolder.get().getId());
-    
+            IdentityZoneHolder.get().getId(),
+            userId);
+
     // Need to create a user with a modified time slightly in the past because
     // the token IAT is in seconds and the token
     // expiry
@@ -194,7 +194,7 @@ public class UaaTokenServicesTests {
         tokenServices.setApplicationEventPublisher(publisher);
         tokenServices.afterPropertiesSet();
     }
-    
+
     @After
     public void teardown() {
         IdentityZoneHolder.clear();
@@ -202,7 +202,7 @@ public class UaaTokenServicesTests {
 
     @Test(expected = InvalidTokenException.class)
     public void testNullRefreshTokenString() {
-        tokenServices.refreshAccessToken(null,null);
+        tokenServices.refreshAccessToken(null, null);
     }
 
     @Test(expected = InvalidGrantException.class)
@@ -236,7 +236,8 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {
+            });
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -266,7 +267,7 @@ public class UaaTokenServicesTests {
         Assert.assertEquals(expectedJson, auditEvent.getData());
         Assert.assertEquals(AuditEventType.TokenIssuedEvent, auditEvent.getType());
     }
-    
+
     @Test
     public void testCreateAccessTokenForAClientInAnotherIdentityZone() {
         String subdomain = "test-zone-subdomain";
@@ -284,7 +285,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -313,7 +314,7 @@ public class UaaTokenServicesTests {
         Assert.assertEquals(expectedJson, auditEvent.getData());
         Assert.assertEquals(AuditEventType.TokenIssuedEvent, auditEvent.getType());
     }
-    
+
     private IdentityZone getIdentityZone(String subdomain) {
         IdentityZone identityZone = new IdentityZone();
         identityZone.setSubdomain(subdomain);
@@ -349,6 +350,19 @@ public class UaaTokenServicesTests {
     }
 
     @Test
+    public void testCreateRevocableAccessTokenPasswordGrant() {
+        AuthorizationRequest authorizationRequest = new AuthorizationRequest(CLIENT_ID,requestedAuthScopes);
+        authorizationRequest.setResourceIds(new HashSet<>(resourceIds));
+        Map<String, String> azParameters = new HashMap<>(authorizationRequest.getRequestParameters());
+        azParameters.put(GRANT_TYPE, PASSWORD);
+        authorizationRequest.setRequestParameters(azParameters);
+        Authentication userAuthentication = defaultUserAuthentication;
+        OAuth2Authentication authentication = new OAuth2Authentication(authorizationRequest.createOAuth2Request(), userAuthentication);
+        testCreateAccessTokenForAUser(authentication, false);
+    }
+
+
+    @Test
     public void testCreateAccessTokenRefreshGrant() throws InterruptedException {
         Calendar expiresAt = Calendar.getInstance();
         expiresAt.add(Calendar.MILLISECOND, 300000);
@@ -356,8 +370,8 @@ public class UaaTokenServicesTests {
         Calendar updatedAt = Calendar.getInstance();
         updatedAt.add(Calendar.MILLISECOND, -1000);
 
-        approvalStore.addApproval(new Approval(userId, CLIENT_ID, readScope.get(0), expiresAt.getTime(), ApprovalStatus.APPROVED,updatedAt.getTime()));
-        approvalStore.addApproval(new Approval(userId, CLIENT_ID, writeScope.get(0), expiresAt.getTime(), ApprovalStatus.APPROVED,updatedAt.getTime()));
+        approvalStore.addApproval(new Approval(userId, CLIENT_ID, readScope.get(0), expiresAt.getTime(), ApprovalStatus.APPROVED, updatedAt.getTime()));
+        approvalStore.addApproval(new Approval(userId, CLIENT_ID, writeScope.get(0), expiresAt.getTime(), ApprovalStatus.APPROVED, updatedAt.getTime()));
 
         AuthorizationRequest authorizationRequest = new AuthorizationRequest(CLIENT_ID,requestedAuthScopes);
         authorizationRequest.setResourceIds(new HashSet<>(resourceIds));
@@ -382,7 +396,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -433,7 +447,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -484,7 +498,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -541,7 +555,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -591,7 +605,7 @@ public class UaaTokenServicesTests {
         refreshAzParameters.put(GRANT_TYPE, REFRESH_TOKEN);
         refreshAuthorizationRequest.setRequestParameters(refreshAzParameters);
 
-        tokenServices.refreshAccessToken(accessToken.getRefreshToken().getValue(), requestFactory.createTokenRequest(refreshAuthorizationRequest,"refresh_token"));
+        tokenServices.refreshAccessToken(accessToken.getRefreshToken().getValue(), requestFactory.createTokenRequest(refreshAuthorizationRequest, "refresh_token"));
     }
 
     @Test
@@ -666,7 +680,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -684,6 +698,8 @@ public class UaaTokenServicesTests {
         assertTrue(((Integer) claims.get(Claims.IAT)) > 0);
         assertTrue(((Integer) claims.get(Claims.EXP)) > 0);
         assertTrue(((Integer) claims.get(Claims.EXP)) - ((Integer) claims.get(Claims.IAT)) > 0);
+        assertNotNull("token revocation signature must be present.",claims.get(Claims.REVOCATION_SIGNATURE));
+
         if (noRefreshToken) {
             assertNull(accessToken.getRefreshToken());
         } else {
@@ -693,7 +709,7 @@ public class UaaTokenServicesTests {
             assertNotNull(refreshTokenJwt);
             Map<String, Object> refreshTokenClaims;
             try {
-                refreshTokenClaims = mapper.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+                refreshTokenClaims = JsonUtils.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
             } catch (Exception e) {
                 throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
             }
@@ -704,6 +720,9 @@ public class UaaTokenServicesTests {
             assertEquals(refreshTokenClaims.get(Claims.CID), CLIENT_ID);
             assertEquals(refreshTokenClaims.get(Claims.SCOPE), requestedAuthScopes);
             assertEquals(refreshTokenClaims.get(Claims.AUD), resourceIds);
+            if (!noRefreshToken) {
+                assertNotNull("token revocation signature must be present.",refreshTokenClaims.get(Claims.REVOCATION_SIGNATURE));
+            }
             assertTrue(((String) refreshTokenClaims.get(Claims.JTI)).length() > 0);
             assertTrue(((Integer) refreshTokenClaims.get(Claims.IAT)) > 0);
             assertTrue(((Integer) refreshTokenClaims.get(Claims.EXP)) > 0);
@@ -761,7 +780,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -773,7 +792,7 @@ public class UaaTokenServicesTests {
         assertNotNull(refreshTokenJwt);
         Map<String, Object> refreshTokenClaims;
         try {
-            refreshTokenClaims = mapper.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+            refreshTokenClaims = JsonUtils.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -796,7 +815,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> reducedClaims;
         try {
-            reducedClaims = mapper.readValue(newTokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            reducedClaims = JsonUtils.readValue(newTokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -826,7 +845,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -838,7 +857,7 @@ public class UaaTokenServicesTests {
         assertNotNull(refreshTokenJwt);
         Map<String, Object> refreshTokenClaims;
         try {
-            refreshTokenClaims = mapper.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+            refreshTokenClaims = JsonUtils.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -877,7 +896,7 @@ public class UaaTokenServicesTests {
         assertNotNull(tokenJwt);
         Map<String, Object> claims;
         try {
-            claims = mapper.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
+            claims = JsonUtils.readValue(tokenJwt.getClaims(), new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -891,7 +910,7 @@ public class UaaTokenServicesTests {
         assertNotNull(refreshTokenJwt);
         Map<String, Object> refreshTokenClaims;
         try {
-            refreshTokenClaims = mapper.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
+            refreshTokenClaims = JsonUtils.readValue(refreshTokenJwt.getClaims(),new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             throw new IllegalStateException(CANNOT_READ_TOKEN_CLAIMS, e);
         }
@@ -1196,7 +1215,7 @@ public class UaaTokenServicesTests {
         azMap.put("external_id", "abcd1234");
         assertEquals(azMap, token.getAdditionalInformation().get("az_attr"));
     }
-    
+
     private BaseClientDetails cloneClient(BaseClientDetails client) {
         return new BaseClientDetails(client);
     }

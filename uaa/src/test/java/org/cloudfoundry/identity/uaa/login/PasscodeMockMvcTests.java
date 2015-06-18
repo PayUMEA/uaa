@@ -1,26 +1,21 @@
 package org.cloudfoundry.identity.uaa.login;
 
-import com.googlecode.flyway.core.Flyway;
 import org.apache.commons.codec.binary.Base64;
-import org.cloudfoundry.identity.uaa.TestClassNullifier;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthentication;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthenticationDetails;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
-import org.cloudfoundry.identity.uaa.config.YamlServletProfileInitializer;
 import org.cloudfoundry.identity.uaa.login.saml.LoginSamlAuthenticationToken;
+import org.cloudfoundry.identity.uaa.mock.InjectedMockContextTest;
 import org.cloudfoundry.identity.uaa.oauth.RemoteUserAuthentication;
 import org.cloudfoundry.identity.uaa.security.web.UaaRequestMatcher;
 import org.cloudfoundry.identity.uaa.user.UaaUserDatabase;
-import org.codehaus.jackson.map.ObjectMapper;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpSession;
-import org.springframework.mock.web.MockServletConfig;
-import org.springframework.mock.web.MockServletContext;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -32,10 +27,7 @@ import org.springframework.security.web.DefaultSecurityFilterChain;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.support.XmlWebApplicationContext;
 import org.springframework.web.filter.GenericFilterBean;
 
 import javax.servlet.FilterChain;
@@ -57,59 +49,42 @@ import static org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-public class PasscodeMockMvcTests extends TestClassNullifier {
+public class PasscodeMockMvcTests extends InjectedMockContextTest {
 
-    private XmlWebApplicationContext webApplicationContext;
-    private MockMvc mockMvc;
     private CaptureSecurityContextFilter captureSecurityContextFilter;
 
     private static String USERNAME = "marissa";
     private UaaPrincipal marissa;
 
     @After
-    public void tearDown() throws Exception {
-        webApplicationContext.getBean(Flyway.class).clean();
-        webApplicationContext.destroy();
+    public void clearSecContext() {
+        SecurityContextHolder.clearContext();
     }
-
     @Before
     public void setUp() throws Exception {
+        FilterChainProxy springSecurityFilterChain = (FilterChainProxy) getWebApplicationContext().getBean("org.springframework.security.filterChainProxy");
+        if (captureSecurityContextFilter==null) {
+            captureSecurityContextFilter = new CaptureSecurityContextFilter();
 
-        MockEnvironment environment = new MockEnvironment();
-        MockServletContext context = new MockServletContext();
-        MockServletConfig config = new MockServletConfig(context);
-        config.addInitParameter("environmentConfigDefaults", "uaa.yml,login.yml");
-        webApplicationContext = new XmlWebApplicationContext();
-        webApplicationContext.setServletConfig(config);
-        webApplicationContext.setEnvironment(environment);
-        webApplicationContext.setConfigLocation("file:./src/main/webapp/WEB-INF/spring-servlet.xml");
-        new YamlServletProfileInitializer().initialize(webApplicationContext);
-        webApplicationContext.refresh();
-        FilterChainProxy springSecurityFilterChain = (FilterChainProxy)webApplicationContext.getBean("org.springframework.security.filterChainProxy");
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilter(springSecurityFilterChain)
-            .build();
+            List<SecurityFilterChain> chains = springSecurityFilterChain.getFilterChains();
+            for (SecurityFilterChain chain : chains) {
 
-        captureSecurityContextFilter = new CaptureSecurityContextFilter();
-
-        List<SecurityFilterChain> chains = springSecurityFilterChain.getFilterChains();
-        for (SecurityFilterChain chain : chains) {
-
-            if (chain instanceof DefaultSecurityFilterChain) {
-                DefaultSecurityFilterChain dfc = (DefaultSecurityFilterChain)chain;
-                if (dfc.getRequestMatcher() instanceof UaaRequestMatcher) {
-                    UaaRequestMatcher matcher = (UaaRequestMatcher)dfc.getRequestMatcher();
-                    if (matcher.toString().contains("passcodeTokenMatcher")) {
-                        dfc.getFilters().add(captureSecurityContextFilter);
-                        break;
+                if (chain instanceof DefaultSecurityFilterChain) {
+                    DefaultSecurityFilterChain dfc = (DefaultSecurityFilterChain) chain;
+                    if (dfc.getRequestMatcher() instanceof UaaRequestMatcher) {
+                        UaaRequestMatcher matcher = (UaaRequestMatcher) dfc.getRequestMatcher();
+                        if (matcher.toString().contains("passcodeTokenMatcher")) {
+                            dfc.getFilters().add(captureSecurityContextFilter);
+                            break;
+                        }
                     }
                 }
             }
+            UaaUserDatabase db = getWebApplicationContext().getBean(UaaUserDatabase.class);
+            marissa = new UaaPrincipal(db.retrieveUserByName(USERNAME, Origin.UAA));
         }
-        UaaUserDatabase db = webApplicationContext.getBean(UaaUserDatabase.class);
-        marissa = new UaaPrincipal(db.retrieveUserByName(USERNAME, Origin.UAA));
     }
 
     @Test
@@ -132,11 +107,10 @@ public class PasscodeMockMvcTests extends TestClassNullifier {
             .accept(APPLICATION_JSON)
             .session(session);
 
-        String passcode = new ObjectMapper().readValue(
-            mockMvc.perform(get)
-            .andExpect(status().isOk())
-            .andDo(print())
-            .andReturn().getResponse().getContentAsString(),
+        String passcode = JsonUtils.readValue(
+            getMockMvc().perform(get)
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(),
             String.class);
 
         mockSecurityContext.setAuthentication(null);
@@ -158,9 +132,8 @@ public class PasscodeMockMvcTests extends TestClassNullifier {
 
 
         Map accessToken =
-            new ObjectMapper().readValue(
-                mockMvc.perform(post)
-                    .andDo(print())
+            JsonUtils.readValue(
+                getMockMvc().perform(post)
                     .andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString(),
                 Map.class);
@@ -199,10 +172,9 @@ public class PasscodeMockMvcTests extends TestClassNullifier {
             .accept(APPLICATION_JSON)
             .session(session);
 
-        String passcode = new ObjectMapper().readValue(
-            mockMvc.perform(get)
+        String passcode = JsonUtils.readValue(
+            getMockMvc().perform(get)
                 .andExpect(status().isOk())
-                .andDo(print())
                 .andReturn().getResponse().getContentAsString(),
             String.class);
 
@@ -225,9 +197,8 @@ public class PasscodeMockMvcTests extends TestClassNullifier {
 
 
         Map accessToken =
-            new ObjectMapper().readValue(
-                mockMvc.perform(post)
-                    .andDo(print())
+            JsonUtils.readValue(
+                getMockMvc().perform(post)
                     .andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString(),
                 Map.class);
@@ -269,10 +240,8 @@ public class PasscodeMockMvcTests extends TestClassNullifier {
             .accept(APPLICATION_JSON)
             .session(session);
 
-        mockMvc.perform(get)
-            .andExpect(status().isForbidden())
-            .andDo(print());
-
+        getMockMvc().perform(get)
+            .andExpect(status().isForbidden());
     }
 
     public static class MockSecurityContext implements SecurityContext {

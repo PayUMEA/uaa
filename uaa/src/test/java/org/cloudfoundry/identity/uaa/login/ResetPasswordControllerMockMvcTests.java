@@ -12,29 +12,22 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.login;
 
-import com.googlecode.flyway.core.Flyway;
-import org.cloudfoundry.identity.uaa.TestClassNullifier;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
 import org.cloudfoundry.identity.uaa.codestore.ExpiringCode;
 import org.cloudfoundry.identity.uaa.codestore.ExpiringCodeStore;
+import org.cloudfoundry.identity.uaa.mock.InjectedMockContextTest;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.ScimUserProvisioning;
 import org.cloudfoundry.identity.uaa.scim.endpoints.PasswordResetEndpoints;
-import org.cloudfoundry.identity.uaa.test.YamlServletProfileInitializerContextInitializer;
 import org.cloudfoundry.identity.uaa.util.JsonUtils;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.web.FilterChainProxy;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.support.XmlWebApplicationContext;
 
 import java.sql.Timestamp;
 import java.util.Arrays;
@@ -46,43 +39,24 @@ import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
+public class ResetPasswordControllerMockMvcTests extends InjectedMockContextTest {
 
-    static XmlWebApplicationContext webApplicationContext;
+    ExpiringCodeStore codeStore;
 
-    private static MockMvc mockMvc;
-    private static ExpiringCodeStore codeStore;
-
-    @BeforeClass
-    public static void initResetPasswordTest() throws Exception {
-        webApplicationContext = new XmlWebApplicationContext();
-        new YamlServletProfileInitializerContextInitializer().initializeContext(webApplicationContext, "login.yml,uaa.yml");
-        webApplicationContext.setConfigLocation("file:./src/main/webapp/WEB-INF/spring-servlet.xml");
-        webApplicationContext.refresh();
-        FilterChainProxy springSecurityFilterChain = webApplicationContext.getBean("springSecurityFilterChain", FilterChainProxy.class);
-
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
-            .addFilter(springSecurityFilterChain)
-            .build();
-        codeStore = webApplicationContext.getBean(ExpiringCodeStore.class);
+    @Before
+    public void initResetPasswordTest() throws Exception {
+        codeStore = getWebApplicationContext().getBean(ExpiringCodeStore.class);
     }
-
-    @AfterClass
-    public static void cleanUpAfterPasswordReset() throws Exception {
-        Flyway flyway = webApplicationContext.getBean(Flyway.class);
-        flyway.clean();
-        webApplicationContext.destroy();
-    }
-
 
     @Test
     public void testResettingAPasswordUsingUsernameToEnsureNoModification() throws Exception {
 
-        List<ScimUser> users = webApplicationContext.getBean(ScimUserProvisioning.class).query("username eq \"marissa\"");
+        List<ScimUser> users = getWebApplicationContext().getBean(ScimUserProvisioning.class).query("username eq \"marissa\"");
         assertNotNull(users);
         assertEquals(1, users.size());
         PasswordResetEndpoints.PasswordChange change = new PasswordResetEndpoints.PasswordChange();
@@ -92,12 +66,13 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
         ExpiringCode code = codeStore.generateCode(JsonUtils.writeValueAsString(change), new Timestamp(System.currentTimeMillis()+ PASSWORD_RESET_LIFETIME));
 
         MockHttpServletRequestBuilder post = post("/reset_password.do")
+            .with(csrf())
             .param("code", code.getCode())
             .param("email", users.get(0).getPrimaryEmail())
             .param("password", "newpassword")
             .param("password_confirmation", "newpassword");
 
-        MvcResult mvcResult = mockMvc.perform(post)
+        MvcResult mvcResult = getMockMvc().perform(post)
             .andExpect(status().isFound())
             .andExpect(redirectedUrl("home"))
             .andReturn();
@@ -115,7 +90,7 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
     @Test
     public void testResettingAPasswordFailsWhenUsernameChanged() throws Exception {
 
-        ScimUserProvisioning userProvisioning = webApplicationContext.getBean(ScimUserProvisioning.class);
+        ScimUserProvisioning userProvisioning = getWebApplicationContext().getBean(ScimUserProvisioning.class);
         List<ScimUser> users = userProvisioning.query("username eq \"marissa\"");
         assertNotNull(users);
         assertEquals(1, users.size());
@@ -131,12 +106,13 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
         user = userProvisioning.update(user.getId(), user);
         try {
             MockHttpServletRequestBuilder post = post("/reset_password.do")
+                .with(csrf())
                 .param("code", code.getCode())
                 .param("email", user.getPrimaryEmail())
                 .param("password", "newpassword")
                 .param("password_confirmation", "newpassword");
 
-            mockMvc.perform(post)
+            getMockMvc().perform(post)
                 .andExpect(status().isUnprocessableEntity());
         } finally {
             user.setUserName(formerUsername);
@@ -145,11 +121,11 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
     }
 
     @Test
-    public void testResettingAPasswordUsingTimestampForUserModification() throws Exception {
-        List<ScimUser> users = webApplicationContext.getBean(ScimUserProvisioning.class).query("username eq \"marissa\"");
+    public void testResettingAPasswordNoCsrfParameter() throws Exception {
+        List<ScimUser> users = getWebApplicationContext().getBean(ScimUserProvisioning.class).query("username eq \"marissa\"");
         assertNotNull(users);
         assertEquals(1, users.size());
-        ExpiringCode code = codeStore.generateCode(users.get(0).getId(), new Timestamp(System.currentTimeMillis()+ PASSWORD_RESET_LIFETIME));
+        ExpiringCode code = codeStore.generateCode(users.get(0).getId(), new Timestamp(System.currentTimeMillis() + PASSWORD_RESET_LIFETIME));
 
         MockHttpServletRequestBuilder post = post("/reset_password.do")
             .param("code", code.getCode())
@@ -157,7 +133,26 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
             .param("password", "newpassword")
             .param("password_confirmation", "newpassword");
 
-        MvcResult mvcResult = mockMvc.perform(post)
+        getMockMvc().perform(post)
+            .andExpect(status().isFound())
+            .andExpect(redirectedUrl("http://localhost/invalid_request"));
+    }
+
+    @Test
+    public void testResettingAPasswordUsingTimestampForUserModification() throws Exception {
+        List<ScimUser> users = getWebApplicationContext().getBean(ScimUserProvisioning.class).query("username eq \"marissa\"");
+        assertNotNull(users);
+        assertEquals(1, users.size());
+        ExpiringCode code = codeStore.generateCode(users.get(0).getId(), new Timestamp(System.currentTimeMillis()+ PASSWORD_RESET_LIFETIME));
+
+        MockHttpServletRequestBuilder post = post("/reset_password.do")
+            .with(csrf())
+            .param("code", code.getCode())
+            .param("email", users.get(0).getPrimaryEmail())
+            .param("password", "newpassword")
+            .param("password_confirmation", "newpassword");
+
+        MvcResult mvcResult = getMockMvc().perform(post)
             .andExpect(status().isFound())
             .andExpect(redirectedUrl("home"))
             .andReturn();
@@ -174,7 +169,7 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
 
     @Test
     public void testResettingAPasswordUsingTimestampUserModified() throws Exception {
-        ScimUserProvisioning userProvisioning = webApplicationContext.getBean(ScimUserProvisioning.class);
+        ScimUserProvisioning userProvisioning = getWebApplicationContext().getBean(ScimUserProvisioning.class);
         List<ScimUser> users = userProvisioning.query("username eq \"marissa\"");
         assertNotNull(users);
         assertEquals(1, users.size());
@@ -182,12 +177,13 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
         ExpiringCode code = codeStore.generateCode(user.getId(), new Timestamp(System.currentTimeMillis() + PASSWORD_RESET_LIFETIME));
 
         MockHttpServletRequestBuilder post = post("/reset_password.do")
+            .with(csrf())
             .param("code", code.getCode())
             .param("email", user.getPrimaryEmail())
             .param("password", "newpassword")
             .param("password_confirmation", "newpassword");
 
-        if (Arrays.asList(webApplicationContext.getEnvironment().getActiveProfiles()).contains("mysql")) {
+        if (Arrays.asList(getWebApplicationContext().getEnvironment().getActiveProfiles()).contains("mysql")) {
             Thread.sleep(1050);
         } else {
             Thread.sleep(50);
@@ -195,7 +191,7 @@ public class ResetPasswordControllerMockMvcTests extends TestClassNullifier {
 
         userProvisioning.update(user.getId(), user);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
             .andExpect(status().isUnprocessableEntity());
 
 

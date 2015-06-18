@@ -12,8 +12,8 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.login.saml;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.cloudfoundry.identity.uaa.login.util.FileLocator;
-import org.codehaus.jackson.annotate.JsonIgnore;
 
 import java.io.File;
 import java.io.IOException;
@@ -57,9 +57,12 @@ public class IdentityProviderDefinition {
 
     @JsonIgnore
     public MetadataLocation getType() {
-        if (metaDataLocation.trim().startsWith("<?xml")) {
+        String trimmedLocation = metaDataLocation.trim();
+        if (trimmedLocation.startsWith("<?xml") ||
+            trimmedLocation.startsWith("<md:EntityDescriptor") ||
+            trimmedLocation.startsWith("<EntityDescriptor")) {
             return MetadataLocation.DATA;
-        } else if (metaDataLocation.startsWith("http")) {
+        } else if (trimmedLocation.startsWith("http")) {
             return MetadataLocation.URL;
         } else {
             try {

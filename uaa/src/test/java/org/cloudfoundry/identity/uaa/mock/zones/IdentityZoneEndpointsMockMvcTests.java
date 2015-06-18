@@ -1,14 +1,14 @@
 package org.cloudfoundry.identity.uaa.mock.zones;
 
-import com.googlecode.flyway.core.Flyway;
-
-import org.cloudfoundry.identity.uaa.TestClassNullifier;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.cloudfoundry.identity.uaa.audit.AuditEventType;
 import org.cloudfoundry.identity.uaa.audit.event.AbstractUaaEvent;
 import org.cloudfoundry.identity.uaa.audit.event.GroupModifiedEvent;
 import org.cloudfoundry.identity.uaa.audit.event.UserModifiedEvent;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.client.ClientConstants;
+import org.cloudfoundry.identity.uaa.mock.InjectedMockContextTest;
 import org.cloudfoundry.identity.uaa.mock.util.MockMvcUtils;
 import org.cloudfoundry.identity.uaa.mock.util.MockMvcUtils.IdentityZoneCreationResult;
 import org.cloudfoundry.identity.uaa.oauth.event.ClientCreateEvent;
@@ -16,7 +16,6 @@ import org.cloudfoundry.identity.uaa.oauth.event.ClientDeleteEvent;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.test.TestApplicationEventListener;
 import org.cloudfoundry.identity.uaa.test.TestClient;
-import org.cloudfoundry.identity.uaa.test.YamlServletProfileInitializerContextInitializer;
 import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.util.SetServerNameRequestPostProcessor;
 import org.cloudfoundry.identity.uaa.zone.IdentityProvider;
@@ -25,25 +24,15 @@ import org.cloudfoundry.identity.uaa.zone.IdentityZone;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.cloudfoundry.identity.uaa.zone.MultitenancyFixture;
 import org.cloudfoundry.identity.uaa.zone.event.IdentityZoneModifiedEvent;
-import org.codehaus.jackson.JsonNode;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.type.TypeReference;
 import org.junit.After;
-import org.junit.AfterClass;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.springframework.http.HttpStatus;
-import org.springframework.mock.web.MockServletContext;
 import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
-import org.springframework.security.web.FilterChainProxy;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.util.StringUtils;
-import org.springframework.web.context.support.XmlWebApplicationContext;
 
 import java.util.Collections;
 import java.util.List;
@@ -51,8 +40,8 @@ import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -62,39 +51,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
-    private static XmlWebApplicationContext webApplicationContext;
-    private static MockMvc mockMvc;
-    private static String identityClientToken = null;
-    private static String adminToken = null;
-    private static TestClient testClient = null;
-    private static MockMvcUtils mockMvcUtils = MockMvcUtils.utils();
+public class IdentityZoneEndpointsMockMvcTests extends InjectedMockContextTest {
+    private String identityClientToken = null;
+    private String adminToken = null;
+    private TestClient testClient = null;
+    private MockMvcUtils mockMvcUtils = MockMvcUtils.utils();
     private RandomValueStringGenerator generator = new RandomValueStringGenerator();
-    private static TestApplicationEventListener<IdentityZoneModifiedEvent> zoneModifiedEventListener;
-    private static TestApplicationEventListener<ClientCreateEvent> clientCreateEventListener;
-    private static TestApplicationEventListener<ClientDeleteEvent> clientDeleteEventListener;
-    private static TestApplicationEventListener<GroupModifiedEvent> groupModifiedEventListener;
-    private static TestApplicationEventListener<UserModifiedEvent> userModifiedEventListener;
-    
-    @BeforeClass
-    public static void setUp() throws Exception {
-        webApplicationContext = new XmlWebApplicationContext();
-        webApplicationContext.setServletContext(new MockServletContext());
-        new YamlServletProfileInitializerContextInitializer().initializeContext(webApplicationContext, "uaa.yml,login.yml");
-        webApplicationContext.setConfigLocation("file:./src/main/webapp/WEB-INF/spring-servlet.xml");
-        webApplicationContext.refresh();
-        FilterChainProxy springSecurityFilterChain = webApplicationContext.getBean("springSecurityFilterChain", FilterChainProxy.class);
+    private TestApplicationEventListener<IdentityZoneModifiedEvent> zoneModifiedEventListener;
+    private TestApplicationEventListener<ClientCreateEvent> clientCreateEventListener;
+    private TestApplicationEventListener<ClientDeleteEvent> clientDeleteEventListener;
+    private TestApplicationEventListener<GroupModifiedEvent> groupModifiedEventListener;
+    private TestApplicationEventListener<UserModifiedEvent> userModifiedEventListener;
 
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilter(springSecurityFilterChain)
-            .build();
-        testClient = new TestClient(mockMvc);
+    @Before
+    public void setUp() throws Exception {
+        testClient = new TestClient(getMockMvc());
+        zoneModifiedEventListener = mockMvcUtils.addEventListener(getWebApplicationContext(), IdentityZoneModifiedEvent.class);
+        clientCreateEventListener = mockMvcUtils.addEventListener(getWebApplicationContext(), ClientCreateEvent.class);
+        clientDeleteEventListener = mockMvcUtils.addEventListener(getWebApplicationContext(), ClientDeleteEvent.class);
+        groupModifiedEventListener = mockMvcUtils.addEventListener(getWebApplicationContext(), GroupModifiedEvent.class);
+        userModifiedEventListener = mockMvcUtils.addEventListener(getWebApplicationContext(), UserModifiedEvent.class);
 
-        zoneModifiedEventListener = mockMvcUtils.addEventListener(webApplicationContext, IdentityZoneModifiedEvent.class);
-        clientCreateEventListener = mockMvcUtils.addEventListener(webApplicationContext, ClientCreateEvent.class);
-        clientDeleteEventListener = mockMvcUtils.addEventListener(webApplicationContext, ClientDeleteEvent.class);
-        groupModifiedEventListener = mockMvcUtils.addEventListener(webApplicationContext, GroupModifiedEvent.class);
-        userModifiedEventListener = mockMvcUtils.addEventListener(webApplicationContext, UserModifiedEvent.class);
-        
 
         identityClientToken = testClient.getClientCredentialsOAuthAccessToken(
             "identity",
@@ -104,17 +81,6 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
             "admin",
             "adminsecret",
             "");
-    }
-
-    @AfterClass
-    public static void tearDown() throws Exception {
-        Flyway flyway = webApplicationContext.getBean(Flyway.class);
-        flyway.clean();
-        webApplicationContext.close();
-    }
-
-    @Before
-    public void before() {
         IdentityZoneHolder.clear();
         zoneModifiedEventListener.clearEvents();
         clientCreateEventListener.clearEvents();
@@ -131,14 +97,14 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
     private ScimUser createUser(String token, String subdomain) throws Exception {
         ScimUser user = getScimUser();
 
-        byte[] requestBody = new ObjectMapper().writeValueAsBytes(user);
+        byte[] requestBody = JsonUtils.writeValueAsBytes(user);
         MockHttpServletRequestBuilder post = post("/Users")
                 .header("Authorization", "Bearer " + token)
                 .contentType(APPLICATION_JSON)
                 .content(requestBody);
         if (subdomain != null && !subdomain.equals("")) post.with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"));
 
-        MvcResult result = mockMvc.perform(post)
+        MvcResult result = getMockMvc().perform(post)
                 .andExpect(status().isCreated())
                 .andExpect(header().string("ETag", "\"0\""))
                 .andExpect(jsonPath("$.userName").value(user.getUserName()))
@@ -147,7 +113,7 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
                 .andExpect(jsonPath("$.name.givenName").value(user.getGivenName()))
                 .andReturn();
 
-        return new ObjectMapper().readValue(result.getResponse().getContentAsString(), ScimUser.class);
+        return JsonUtils.readValue(result.getResponse().getContentAsString(), ScimUser.class);
     }
 
     private ScimUser getScimUser() {
@@ -169,17 +135,17 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         assertEquals(created.getSubdomain(), retrieved.getSubdomain());
         assertEquals(created.getDescription(), retrieved.getDescription());
     }
-    
+
     @Test
     public void testGetZonesAsIdentityClient() throws Exception  {
         String id = generator.generate();
         IdentityZone created = createZone(id, HttpStatus.CREATED, identityClientToken);
-        MvcResult result = mockMvc.perform(get("/identity-zones/")
-                .header("Authorization", "Bearer " + identityClientToken))
+        MvcResult result = getMockMvc().perform(get("/identity-zones/")
+            .header("Authorization", "Bearer " + identityClientToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        
-        
+
+
         List<IdentityZone> zones = JsonUtils.readValue(result.getResponse().getContentAsString(), new TypeReference<List<IdentityZone>>() {});
         IdentityZone retrieved = null;
         for (IdentityZone identityZone : zones) {
@@ -187,7 +153,7 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
                 retrieved = identityZone;
             }
         }
-        
+
         assertEquals(created.getId(), retrieved.getId());
         assertEquals(created.getName(), retrieved.getName());
         assertEquals(created.getSubdomain(), retrieved.getSubdomain());
@@ -264,9 +230,9 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         String id = generator.generate();
 
         IdentityZone created = createZone(id, HttpStatus.CREATED, identityClientToken);
-        
+
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
-        
+
         updateZone(created, HttpStatus.OK, identityClientToken);
         checkZoneAuditEventInUaa(2, AuditEventType.IdentityZoneModifiedEvent);
     }
@@ -320,7 +286,7 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
     public void testCreateDuplicateZoneReturns409() throws Exception {
         String id = generator.generate();
         createZone(id, HttpStatus.CREATED, identityClientToken);
-        
+
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
 
         createZone(id, HttpStatus.CONFLICT, identityClientToken);
@@ -333,21 +299,21 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         String id = UUID.randomUUID().toString();
         IdentityZone identityZone = getIdentityZone(id);
 
-        mockMvc.perform(post("/identity-zones")
-            .header("Authorization", "Bearer "+identityClientToken)
+        getMockMvc().perform(post("/identity-zones")
+            .header("Authorization", "Bearer " + identityClientToken)
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(identityZone)))
+            .content(JsonUtils.writeValueAsString(identityZone)))
             .andExpect(status().isCreated())
             .andReturn();
 
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
 
-        IdentityProviderProvisioning idpp = (IdentityProviderProvisioning) webApplicationContext.getBean("identityProviderProvisioning");
+        IdentityProviderProvisioning idpp = (IdentityProviderProvisioning) getWebApplicationContext().getBean("identityProviderProvisioning");
         IdentityProvider idp1 = idpp.retrieveByOrigin(Origin.UAA, identityZone.getId());
         IdentityProvider idp2 = idpp.retrieveByOrigin(Origin.UAA, IdentityZone.getUaa().getId());
         assertNotEquals(idp1,  idp2);
     }
-    
+
     @Test
     public void testCreateAndDeleteLimitedClientInNewZoneUsingZoneEndpoint() throws Exception {
         String id = generator.generate();
@@ -357,24 +323,24 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         client.setClientSecret("secret");
         client.addAdditionalInformation(ClientConstants.ALLOWED_PROVIDERS, Collections.singletonList(Origin.UAA));
         client.addAdditionalInformation("foo", "bar");
-        MvcResult result = mockMvc.perform(post("/identity-zones/"+zone.getId()+"/clients")
-                .header("Authorization", "Bearer " + identityClientToken)
-                .contentType(APPLICATION_JSON)
-                .accept(APPLICATION_JSON)
-                .content(new ObjectMapper().writeValueAsString(client)))
+        MvcResult result = getMockMvc().perform(post("/identity-zones/" + zone.getId() + "/clients")
+            .header("Authorization", "Bearer " + identityClientToken)
+            .contentType(APPLICATION_JSON)
+            .accept(APPLICATION_JSON)
+            .content(JsonUtils.writeValueAsString(client)))
                 .andExpect(status().isCreated()).andReturn();
-        BaseClientDetails created = new ObjectMapper().readValue(result.getResponse().getContentAsString(), BaseClientDetails.class);
+        BaseClientDetails created = JsonUtils.readValue(result.getResponse().getContentAsString(), BaseClientDetails.class);
         assertNull(created.getClientSecret());
         assertEquals("zones.write", created.getAdditionalInformation().get(ClientConstants.CREATED_WITH));
         assertEquals(Collections.singletonList(Origin.UAA), created.getAdditionalInformation().get(ClientConstants.ALLOWED_PROVIDERS));
         assertEquals("bar", created.getAdditionalInformation().get("foo"));
         checkAuditEventListener(1, AuditEventType.ClientCreateSuccess, clientCreateEventListener, id, "http://localhost:8080/uaa/oauth/token", "identity");
-        
-        mockMvc.perform(delete("/identity-zones/"+zone.getId()+"/clients/"+created.getClientId(), IdentityZone.getUaa().getId())
-                .header("Authorization", "Bearer " + identityClientToken)
-                .accept(APPLICATION_JSON))
+
+        getMockMvc().perform(delete("/identity-zones/" + zone.getId() + "/clients/" + created.getClientId(), IdentityZone.getUaa().getId())
+            .header("Authorization", "Bearer " + identityClientToken)
+            .accept(APPLICATION_JSON))
                 .andExpect(status().isOk());
-        
+
         checkAuditEventListener(1, AuditEventType.ClientDeleteSuccess, clientDeleteEventListener, id, "http://localhost:8080/uaa/oauth/token", "identity");
     }
 
@@ -384,22 +350,22 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
                 "uaa.resource");
         client.setClientSecret("secret");
         client.addAdditionalInformation(ClientConstants.ALLOWED_PROVIDERS, Collections.singletonList(Origin.UAA));
-        mockMvc.perform(post("/identity-zones/uaa/clients")
-                .header("Authorization", "Bearer " + identityClientToken)
-                .contentType(APPLICATION_JSON)
-                .accept(APPLICATION_JSON)
-                .content(new ObjectMapper().writeValueAsString(client)))
+        getMockMvc().perform(post("/identity-zones/uaa/clients")
+            .header("Authorization", "Bearer " + identityClientToken)
+            .contentType(APPLICATION_JSON)
+            .accept(APPLICATION_JSON)
+            .content(JsonUtils.writeValueAsString(client)))
                 .andExpect(status().isForbidden());
         assertEquals(0, clientCreateEventListener.getEventCount());
-        
-        mockMvc.perform(delete("/identity-zones/uaa/clients/admin")
-                .header("Authorization", "Bearer " + identityClientToken)
-                .accept(APPLICATION_JSON))
+
+        getMockMvc().perform(delete("/identity-zones/uaa/clients/admin")
+            .header("Authorization", "Bearer " + identityClientToken)
+            .accept(APPLICATION_JSON))
                 .andExpect(status().isForbidden());
-        
+
         assertEquals(0, clientDeleteEventListener.getEventCount());
     }
-    
+
     @Test
     public void testCreateAdminClientInNewZoneUsingZoneEndpointReturns400() throws Exception {
         String id = generator.generate();
@@ -407,11 +373,11 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         BaseClientDetails client = new BaseClientDetails("admin-client", null, null, "client_credentials",
                 "clients.write");
         client.setClientSecret("secret");
-        mockMvc.perform(post("/identity-zones/"+zone.getId()+"/clients")
-                .header("Authorization", "Bearer " + identityClientToken)
-                .contentType(APPLICATION_JSON)
-                .accept(APPLICATION_JSON)
-                .content(new ObjectMapper().writeValueAsString(client)))
+        getMockMvc().perform(post("/identity-zones/" + zone.getId() + "/clients")
+            .header("Authorization", "Bearer " + identityClientToken)
+            .contentType(APPLICATION_JSON)
+            .accept(APPLICATION_JSON)
+            .content(JsonUtils.writeValueAsString(client)))
                 .andExpect(status().isBadRequest());
     }
 
@@ -427,10 +393,10 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
     @Test
     public void testCreateInvalidZone() throws Exception {
         IdentityZone identityZone = new IdentityZone();
-        mockMvc.perform(post("/identity-zones")
-            .header("Authorization", "Bearer "+identityClientToken)
+        getMockMvc().perform(post("/identity-zones")
+            .header("Authorization", "Bearer " + identityClientToken)
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(identityZone)))
+            .content(JsonUtils.writeValueAsString(identityZone)))
             .andExpect(status().isBadRequest());
 
         assertEquals(0, zoneModifiedEventListener.getEventCount());
@@ -445,20 +411,20 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         String id2 = UUID.randomUUID().toString();
         IdentityZone identityZone1 = MultitenancyFixture.identityZone(id1, subdomain);
         IdentityZone identityZone2 = MultitenancyFixture.identityZone(id2, subdomain);
-        mockMvc.perform(post("/identity-zones")
-            .header("Authorization", "Bearer "+identityClientToken)
+        getMockMvc().perform(post("/identity-zones")
+            .header("Authorization", "Bearer " + identityClientToken)
             .contentType(APPLICATION_JSON)
             .accept(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(identityZone1)))
+            .content(JsonUtils.writeValueAsString(identityZone1)))
             .andExpect(status().isCreated());
 
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
 
-        mockMvc.perform(post("/identity-zones")
-            .header("Authorization", "Bearer "+identityClientToken)
+        getMockMvc().perform(post("/identity-zones")
+            .header("Authorization", "Bearer " + identityClientToken)
             .contentType(APPLICATION_JSON)
             .accept(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(identityZone2)))
+            .content(JsonUtils.writeValueAsString(identityZone2)))
             .andExpect(status().isConflict());
 
         assertEquals(1, zoneModifiedEventListener.getEventCount());
@@ -469,9 +435,9 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         String subdomain = generator.generate();
         BaseClientDetails adminClient = new BaseClientDetails("admin", null, null, "client_credentials","scim.read,scim.write");
         adminClient.setClientSecret("admin-secret");
-        IdentityZoneCreationResult creationResult = mockMvcUtils.createOtherIdentityZoneAndReturnResult(subdomain, mockMvc, webApplicationContext, adminClient);
+        IdentityZoneCreationResult creationResult = mockMvcUtils.createOtherIdentityZoneAndReturnResult(subdomain, getMockMvc(), getWebApplicationContext(), adminClient);
         IdentityZone identityZone = creationResult.getIdentityZone();
-        
+
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
         checkAuditEventListener(1, AuditEventType.GroupCreatedEvent, groupModifiedEventListener, IdentityZone.getUaa().getId(), "http://localhost:8080/uaa/oauth/token", "identity");
         checkAuditEventListener(1, AuditEventType.ClientCreateSuccess, clientCreateEventListener, identityZone.getId(), "http://localhost:8080/uaa/oauth/token", creationResult.getZoneAdminUser().getId());
@@ -479,22 +445,22 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         String zoneAdminToken = testClient.getClientCredentialsOAuthAccessToken("admin", "admin-secret", "scim.write,scim.read", subdomain);
         ScimUser user = createUser(zoneAdminToken, subdomain);
         checkAuditEventListener(1, AuditEventType.UserCreatedEvent, userModifiedEventListener, identityZone.getId(), "http://"+subdomain+".localhost:8080/uaa/oauth/token", "admin");
-       
+
         user.setUserName("updated-username@test.com");
         MockHttpServletRequestBuilder put = put("/Users/" + user.getId())
             .header("Authorization", "Bearer " + zoneAdminToken)
             .header("If-Match", "\"" + user.getVersion() + "\"")
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(user))
+            .content(JsonUtils.writeValueAsString(user))
             .with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"));
 
-        MvcResult result = mockMvc.perform(put)
+        MvcResult result = getMockMvc().perform(put)
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.userName").value(user.getUserName()))
             .andReturn();
-        
+
         checkAuditEventListener(2, AuditEventType.UserModifiedEvent, userModifiedEventListener, identityZone.getId(), "http://"+subdomain+".localhost:8080/uaa/oauth/token", "admin");
-        user = new ObjectMapper().readValue(result.getResponse().getContentAsString(), ScimUser.class);
+        user = JsonUtils.readValue(result.getResponse().getContentAsString(), ScimUser.class);
         List<ScimUser> users = getUsersInZone(subdomain, zoneAdminToken);
         assertTrue(users.contains(user));
         assertEquals(1, users.size());
@@ -505,7 +471,7 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
             .contentType(APPLICATION_JSON)
             .with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"));
 
-        mockMvc.perform(delete)
+        getMockMvc().perform(delete)
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.id").value(user.getId()))
             .andReturn();
@@ -519,16 +485,17 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         MockHttpServletRequestBuilder get = get("/Users").header("Authorization", "Bearer " + token);
         if (subdomain != null && !subdomain.equals("")) get.with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"));
 
-        MvcResult mvcResult = mockMvc.perform(get).andExpect(status().isOk()).andReturn();
+        MvcResult mvcResult = getMockMvc().perform(get).andExpect(status().isOk()).andReturn();
 
-        JsonNode root = new ObjectMapper().readTree(mvcResult.getResponse().getContentAsString());
-        return new ObjectMapper().readValue(root.get("resources").toString(), new TypeReference<List<ScimUser>>() {});
+        JsonNode root = JsonUtils.readTree(mvcResult.getResponse().getContentAsString());
+        return JsonUtils.readValue(root.get("resources").toString(), new TypeReference<List<ScimUser>>() {
+        });
     }
 
     @Test
     public void testCreateAndListUsersInOtherZoneIsUnauthorized() throws Exception {
         String subdomain = generator.generate();
-        mockMvcUtils.createOtherIdentityZone(subdomain, mockMvc, webApplicationContext);
+        mockMvcUtils.createOtherIdentityZone(subdomain, getMockMvc(), getWebApplicationContext());
 
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
 
@@ -536,19 +503,19 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
 
         ScimUser user = getScimUser();
 
-        byte[] requestBody = new ObjectMapper().writeValueAsBytes(user);
+        byte[] requestBody = JsonUtils.writeValueAsBytes(user);
         MockHttpServletRequestBuilder post = post("/Users")
             .with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"))
             .header("Authorization", "Bearer " + defaultZoneAdminToken)
             .contentType(APPLICATION_JSON)
             .content(requestBody);
 
-        mockMvc.perform(post).andExpect(status().isUnauthorized());
+        getMockMvc().perform(post).andExpect(status().isUnauthorized());
 
         MockHttpServletRequestBuilder get = get("/Users").header("Authorization", "Bearer " + defaultZoneAdminToken);
         if (subdomain != null && !subdomain.equals("")) get.with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"));
 
-        mockMvc.perform(get).andExpect(status().isUnauthorized()).andReturn();
+        getMockMvc().perform(get).andExpect(status().isUnauthorized()).andReturn();
     }
 
     @Test
@@ -557,7 +524,7 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         ScimUser user = createUser(defaultZoneAdminToken, null);
 
         String subdomain = generator.generate();
-        mockMvcUtils.createOtherIdentityZone(subdomain, mockMvc, webApplicationContext);
+        mockMvcUtils.createOtherIdentityZone(subdomain, getMockMvc(), getWebApplicationContext());
 
         checkZoneAuditEventInUaa(1, AuditEventType.IdentityZoneCreatedEvent);
 
@@ -568,9 +535,9 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
             .header("Authorization", "Bearer " + zoneAdminToken)
             .header("If-Match", "\"" + user.getVersion() + "\"")
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(user));
+            .content(JsonUtils.writeValueAsString(user));
 
-        mockMvc.perform(put)
+        getMockMvc().perform(put)
             .andExpect(status().isUnauthorized())
             .andReturn();
 
@@ -579,13 +546,13 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
             .header("If-Match", "\"" + user.getVersion() + "\"")
             .contentType(APPLICATION_JSON);
 
-        mockMvc.perform(delete)
+        getMockMvc().perform(delete)
             .andExpect(status().isUnauthorized())
             .andReturn();
     }
 
     private IdentityZone getIdentityZone(String id, HttpStatus expect, String token) throws Exception {
-        MvcResult result = mockMvc.perform(get("/identity-zones/"+id)
+        MvcResult result = getMockMvc().perform(get("/identity-zones/" + id)
             .header("Authorization", "Bearer " + token))
             .andExpect(status().is(expect.value()))
             .andReturn();
@@ -598,10 +565,10 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
 
     private IdentityZone createZone(String id, HttpStatus expect, String token) throws Exception {
         IdentityZone identityZone = getIdentityZone(id);
-        MvcResult result = mockMvc.perform(post("/identity-zones")
+        MvcResult result = getMockMvc().perform(post("/identity-zones")
             .header("Authorization", "Bearer " + token)
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(identityZone)))
+            .content(JsonUtils.writeValueAsString(identityZone)))
             .andExpect(status().is(expect.value()))
             .andReturn();
 
@@ -612,10 +579,10 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
     }
 
     private IdentityZone updateZone(IdentityZone identityZone, HttpStatus expect, String token) throws Exception {
-        MvcResult result = mockMvc.perform(put("/identity-zones/" + identityZone.getId())
+        MvcResult result = getMockMvc().perform(put("/identity-zones/" + identityZone.getId())
             .header("Authorization", "Bearer " + token)
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsString(identityZone)))
+            .content(JsonUtils.writeValueAsString(identityZone)))
             .andExpect(status().is(expect.value()))
             .andReturn();
 
@@ -624,11 +591,11 @@ public class IdentityZoneEndpointsMockMvcTests extends TestClassNullifier {
         }
         return null;
     }
-    
+
     private <T extends AbstractUaaEvent> void checkZoneAuditEventInUaa(int eventCount, AuditEventType eventType) {
         checkAuditEventListener(eventCount, eventType, zoneModifiedEventListener, IdentityZone.getUaa().getId(), "http://localhost:8080/uaa/oauth/token", "identity");
     }
-    
+
     private <T extends AbstractUaaEvent> void checkAuditEventListener(int eventCount, AuditEventType eventType, TestApplicationEventListener<T> eventListener, String identityZoneId, String issuer, String subject) {
         T event = eventListener.getLatestEvent();
         assertEquals(eventCount, eventListener.getEventCount());

@@ -12,33 +12,21 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.endpoints;
 
-import org.cloudfoundry.identity.uaa.TestClassNullifier;
+import org.cloudfoundry.identity.uaa.mock.InjectedMockContextTest;
 import org.cloudfoundry.identity.uaa.mock.util.MockMvcUtils;
 import org.cloudfoundry.identity.uaa.oauth.client.ClientDetailsModification;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.ScimUserProvisioning;
 import org.cloudfoundry.identity.uaa.test.TestClient;
-import org.cloudfoundry.identity.uaa.test.YamlServletProfileInitializerContextInitializer;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.util.SetServerNameRequestPostProcessor;
-import org.cloudfoundry.identity.uaa.zone.IdentityZone;
-import org.cloudfoundry.identity.uaa.zone.MultitenancyFixture;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
-import org.springframework.security.oauth2.provider.client.BaseClientDetails;
-import org.springframework.security.web.FilterChainProxy;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.support.XmlWebApplicationContext;
-
-import java.util.ArrayList;
-import java.util.List;
 
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -46,10 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
+public class ScimUserEndpointsMockMvcTests extends InjectedMockContextTest {
 
-    private XmlWebApplicationContext webApplicationContext;
-    private MockMvc mockMvc;
     private String scimReadWriteToken;
     private String scimCreateToken;
     private RandomValueStringGenerator generator = new RandomValueStringGenerator();
@@ -58,18 +44,8 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
 
     @Before
     public void setUp() throws Exception {
-        webApplicationContext = new XmlWebApplicationContext();
-        new YamlServletProfileInitializerContextInitializer().initializeContext(webApplicationContext, "login.yml,uaa.yml");
-        webApplicationContext.setConfigLocation("file:./src/main/webapp/WEB-INF/spring-servlet.xml");
-        webApplicationContext.refresh();
 
-        FilterChainProxy springSecurityFilterChain = webApplicationContext.getBean("springSecurityFilterChain", FilterChainProxy.class);
-
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
-            .addFilter(springSecurityFilterChain)
-            .build();
-
-        testClient = new TestClient(mockMvc);
+        testClient = new TestClient(getMockMvc());
         String adminToken = testClient.getClientCredentialsOAuthAccessToken("admin", "adminsecret",
                 "clients.read clients.write clients.secret");
         String clientId = generator.generate().toLowerCase();
@@ -77,11 +53,6 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
         createScimClient(adminToken, clientId, clientSecret);
         scimReadWriteToken = testClient.getClientCredentialsOAuthAccessToken(clientId, clientSecret,"scim.read scim.write password.write");
         scimCreateToken = testClient.getClientCredentialsOAuthAccessToken(clientId, clientSecret,"scim.create");
-    }
-
-    @After
-    public void tearDown() {
-        webApplicationContext.destroy();
     }
 
     private ScimUser createUser(String token) throws Exception {
@@ -93,14 +64,14 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
     }
 
     private ScimUser createUser(ScimUser user, String token, String subdomain) throws Exception {
-        byte[] requestBody = new ObjectMapper().writeValueAsBytes(user);
+        byte[] requestBody = JsonUtils.writeValueAsBytes(user);
         MockHttpServletRequestBuilder post = post("/Users")
             .header("Authorization", "Bearer " + token)
             .contentType(APPLICATION_JSON)
             .content(requestBody);
         if (subdomain != null && !subdomain.equals("")) post.with(new SetServerNameRequestPostProcessor(subdomain + ".localhost"));
 
-        MvcResult result = mockMvc.perform(post)
+        MvcResult result = getMockMvc().perform(post)
                 .andExpect(status().isCreated())
                 .andExpect(header().string("ETag", "\"0\""))
                 .andExpect(jsonPath("$.userName").value(user.getUserName()))
@@ -109,7 +80,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
                 .andExpect(jsonPath("$.name.givenName").value(user.getGivenName()))
             .andReturn();
 
-        return new ObjectMapper().readValue(result.getResponse().getContentAsString(), ScimUser.class);
+        return JsonUtils.readValue(result.getResponse().getContentAsString(), ScimUser.class);
     }
 
     private ScimUser getScimUser() {
@@ -153,7 +124,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
     @Test
     public void testCreateUserInZone() throws Exception {
         String subdomain = generator.generate();
-        mockMvcUtils.createOtherIdentityZone(subdomain, mockMvc, webApplicationContext);
+        mockMvcUtils.createOtherIdentityZone(subdomain, getMockMvc(), getWebApplicationContext());
 
         String zoneAdminToken = testClient.getClientCredentialsOAuthAccessToken("admin", "admin-secret", "scim.write", subdomain);
 
@@ -163,28 +134,28 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
     @Test
     public void testCreateUserInOtherZoneIsUnauthorized() throws Exception {
         String subdomain = generator.generate();
-        mockMvcUtils.createOtherIdentityZone(subdomain, mockMvc, webApplicationContext);
+        mockMvcUtils.createOtherIdentityZone(subdomain, getMockMvc(), getWebApplicationContext());
 
         String otherSubdomain = generator.generate();
-        mockMvcUtils.createOtherIdentityZone(otherSubdomain, mockMvc, webApplicationContext);
+        mockMvcUtils.createOtherIdentityZone(otherSubdomain, getMockMvc(), getWebApplicationContext());
 
         String zoneAdminToken = testClient.getClientCredentialsOAuthAccessToken("admin", "admin-secret", "scim.write", subdomain);
 
         ScimUser user = getScimUser();
 
-        byte[] requestBody = new ObjectMapper().writeValueAsBytes(user);
+        byte[] requestBody = JsonUtils.writeValueAsBytes(user);
         MockHttpServletRequestBuilder post = post("/Users")
                 .with(new SetServerNameRequestPostProcessor(otherSubdomain + ".localhost"))
                 .header("Authorization", "Bearer " + zoneAdminToken)
                 .contentType(APPLICATION_JSON)
                 .content(requestBody);
 
-        mockMvc.perform(post).andExpect(status().isUnauthorized());
+        getMockMvc().perform(post).andExpect(status().isUnauthorized());
     }
 
 
     private void verifyUser(String token) throws Exception {
-        ScimUserProvisioning usersRepository = webApplicationContext.getBean(ScimUserProvisioning.class);
+        ScimUserProvisioning usersRepository = getWebApplicationContext().getBean(ScimUserProvisioning.class);
         String email = "joe@"+generator.generate().toLowerCase()+".com";
         ScimUser joel = new ScimUser(null, email, "Joel", "D'sa");
         joel.addEmail(email);
@@ -194,7 +165,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
             .header("Authorization", "Bearer " + token)
             .accept(APPLICATION_JSON);
 
-        mockMvc.perform(get)
+        getMockMvc().perform(get)
             .andExpect(status().isOk())
             .andExpect(header().string("ETag", "\"0\""))
             .andExpect(jsonPath("$.userName").value(email))
@@ -205,7 +176,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
     }
 
     private void getUser(String token, int status) throws Exception {
-        ScimUserProvisioning usersRepository = webApplicationContext.getBean(ScimUserProvisioning.class);
+        ScimUserProvisioning usersRepository = getWebApplicationContext().getBean(ScimUserProvisioning.class);
         String email = "joe@"+generator.generate().toLowerCase()+".com";
         ScimUser joel = new ScimUser(null, email, "Joel", "D'sa");
         joel.addEmail(email);
@@ -216,7 +187,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
             .accept(APPLICATION_JSON);
 
         if (status==HttpStatus.OK.value()) {
-            mockMvc.perform(get)
+            getMockMvc().perform(get)
                 .andExpect(status().is(status))
                 .andExpect(header().string("ETag", "\"0\""))
                 .andExpect(jsonPath("$.userName").value(email))
@@ -224,7 +195,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
                 .andExpect(jsonPath("$.name.familyName").value("D'sa"))
                 .andExpect(jsonPath("$.name.givenName").value("Joel"));
         } else {
-            mockMvc.perform(get)
+            getMockMvc().perform(get)
                 .andExpect(status().is(status));
         }
     }
@@ -240,7 +211,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
     }
 
     private void updateUser(String token, int status) throws Exception {
-        ScimUserProvisioning usersRepository = webApplicationContext.getBean(ScimUserProvisioning.class);
+        ScimUserProvisioning usersRepository = getWebApplicationContext().getBean(ScimUserProvisioning.class);
         String email = "otheruser@"+generator.generate().toLowerCase()+".com";
         ScimUser user = new ScimUser(null, email, "Other", "User");
         user.addEmail(email);
@@ -255,10 +226,10 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
             .header("If-Match", "\"" + user.getVersion() + "\"")
             .accept(APPLICATION_JSON)
             .contentType(APPLICATION_JSON)
-            .content(new ObjectMapper().writeValueAsBytes(user));
+            .content(JsonUtils.writeValueAsBytes(user));
 
         if (status==HttpStatus.OK.value()) {
-            mockMvc.perform(put)
+            getMockMvc().perform(put)
                 .andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"1\""))
                 .andExpect(jsonPath("$.userName").value(username2))
@@ -266,7 +237,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
                 .andExpect(jsonPath("$.name.givenName").value("Joe"))
                 .andExpect(jsonPath("$.name.familyName").value("Smith"));
         } else {
-            mockMvc.perform(put)
+            getMockMvc().perform(put)
                 .andExpect(status().is(status));
         }
     }
@@ -289,7 +260,7 @@ public class ScimUserEndpointsMockMvcTests extends TestClassNullifier {
                 .header("Authorization", "Bearer " + adminAccessToken)
                 .accept(APPLICATION_JSON)
                 .contentType(APPLICATION_JSON)
-                .content(new ObjectMapper().writeValueAsBytes(client));
-        mockMvc.perform(createClientPost).andExpect(status().isCreated());
+                .content(JsonUtils.writeValueAsBytes(client));
+        getMockMvc().perform(createClientPost).andExpect(status().isCreated());
     }
 }

@@ -27,10 +27,10 @@ import org.cloudfoundry.identity.uaa.login.saml.IdentityProviderConfigurator;
 import org.cloudfoundry.identity.uaa.login.saml.IdentityProviderDefinition;
 import org.cloudfoundry.identity.uaa.login.saml.LoginSamlAuthenticationToken;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.util.UaaStringUtils;
 import org.cloudfoundry.identity.uaa.util.UaaUrlUtils;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.springframework.core.env.Environment;
 import org.springframework.core.io.support.PropertiesLoaderUtils;
 import org.springframework.http.HttpStatus;
@@ -53,7 +53,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletRequestWrapper;
 import javax.servlet.http.HttpSession;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -186,6 +185,11 @@ public class LoginInfoEndpoint {
         return login(model, principal, Arrays.asList("passcode"), false, request);
     }
 
+    @RequestMapping(value = {"/invalid_request" })
+    public String invalidRequest(HttpServletRequest request) {
+        return "invalid_request";
+    }
+
     protected String getZonifiedEntityId() {
         if (UaaUrlUtils.isUrl(entityID)) {
             return UaaUrlUtils.addSubdomainToUrl(entityID);
@@ -204,11 +208,13 @@ public class LoginInfoEndpoint {
 
         List<IdentityProviderDefinition> idps = getIdentityProviderDefinitions(allowedIdps);
 
+        boolean fieldUsernameShow = true;
+
         if (allowedIdps==null ||
             allowedIdps.contains(Origin.LDAP) ||
             allowedIdps.contains(Origin.UAA) ||
             allowedIdps.contains(Origin.KEYSTONE)) {
-            model.addAttribute("fieldUsernameShow", true);
+            fieldUsernameShow = true;
         } else if (idps!=null && idps.size()==1) {
             UriComponentsBuilder builder = UriComponentsBuilder.fromPath("saml/discovery");
             builder.queryParam("returnIDParam", "idp");
@@ -217,8 +223,14 @@ public class LoginInfoEndpoint {
             builder.queryParam("isPassive", "true");
             return "redirect:" + builder.build().toUriString();
         } else {
-            model.addAttribute("fieldUsernameShow", false);
+            fieldUsernameShow = false;
         }
+        boolean linkCreateAccountShow = fieldUsernameShow;
+        if (fieldUsernameShow && (allowedIdps!=null && !allowedIdps.contains(Origin.UAA))) {
+            linkCreateAccountShow = false;
+        }
+        model.addAttribute("linkCreateAccountShow", linkCreateAccountShow);
+        model.addAttribute("fieldUsernameShow",fieldUsernameShow);
         populatePrompts(model, excludedPrompts, nonHtml);
         setCommitInfo(model);
         model.addAttribute("zone_name", IdentityZoneHolder.get().getName());
@@ -400,7 +412,7 @@ public class LoginInfoEndpoint {
 
     protected ExpiringCode doGenerateCode(Object o) throws IOException {
         return expiringCodeStore.generateCode(
-            new ObjectMapper().writeValueAsString(o),
+            JsonUtils.writeValueAsString(o),
             new Timestamp(System.currentTimeMillis() + (getCodeExpirationMillis()))
         );
     }

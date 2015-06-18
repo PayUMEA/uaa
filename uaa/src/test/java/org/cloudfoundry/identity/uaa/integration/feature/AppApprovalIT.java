@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -64,12 +64,17 @@ public class AppApprovalIT {
 
     @Value("${integration.test.app_url}")
     String appUrl;
-    
+
     @Test
     public void testApprovingAnApp() throws Exception {
         ScimUser user = createUnapprovedUser();
 
-        webDriver.get(baseUrl + "/logout.do");
+        try {
+            webDriver.get(baseUrl + "/logout.do");
+        }catch (org.openqa.selenium.TimeoutException x) {
+            //try again - this should not be happening - 20 second timeouts
+            webDriver.get(baseUrl + "/logout.do");
+        }
 
         // Visit app
         webDriver.get(appUrl);
@@ -111,7 +116,7 @@ public class AppApprovalIT {
         // Revoke app
         webDriver.findElement(By.linkText("Revoke Access")).click();
 
-        Assert.assertEquals("Are you sure you want to revoke access to app?", webDriver.findElement(By.cssSelector(".revocation-modal p")).getText());
+        Assert.assertEquals("Are you sure you want to revoke access to The Ultimate Oauth App?", webDriver.findElement(By.cssSelector(".revocation-modal p")).getText());
 
         // click cancel
         webDriver.findElement(By.cssSelector("#app-form .revocation-cancel")).click();
