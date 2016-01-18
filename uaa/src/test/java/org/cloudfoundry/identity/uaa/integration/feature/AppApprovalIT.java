@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -12,14 +12,19 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.integration.feature;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 
 import org.cloudfoundry.identity.uaa.ServerRunning;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.test.TestAccountSetup;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
+import org.hamcrest.Description;
 import org.hamcrest.Matchers;
+import org.hamcrest.TypeSafeMatcher;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -64,12 +69,23 @@ public class AppApprovalIT {
 
     @Value("${integration.test.app_url}")
     String appUrl;
-    
+
+    @Before
+    @After
+    public void logout_and_clear_cookies() {
+        try {
+            webDriver.get(baseUrl + "/logout.do");
+        }catch (org.openqa.selenium.TimeoutException x) {
+            //try again - this should not be happening - 20 second timeouts
+            webDriver.get(baseUrl + "/logout.do");
+        }
+        webDriver.get(appUrl+"/j_spring_security_logout");
+        webDriver.manage().deleteAllCookies();
+    }
+
     @Test
     public void testApprovingAnApp() throws Exception {
         ScimUser user = createUnapprovedUser();
-
-        webDriver.get(baseUrl + "/logout.do");
 
         // Visit app
         webDriver.get(appUrl);
@@ -111,7 +127,7 @@ public class AppApprovalIT {
         // Revoke app
         webDriver.findElement(By.linkText("Revoke Access")).click();
 
-        Assert.assertEquals("Are you sure you want to revoke access to app?", webDriver.findElement(By.cssSelector(".revocation-modal p")).getText());
+        Assert.assertEquals("Are you sure you want to revoke access to The Ultimate Oauth App?", webDriver.findElement(By.cssSelector(".revocation-modal p")).getText());
 
         // click cancel
         webDriver.findElement(By.cssSelector("#app-form .revocation-cancel")).click();
@@ -124,6 +140,22 @@ public class AppApprovalIT {
         Assert.assertThat(webDriver.findElements(By.xpath("//input[@value='app-password.write']")), Matchers.empty());
     }
 
+    @Test
+    public void testInvalidAppRedirectDisplaysError() throws Exception {
+        ScimUser user = createUnapprovedUser();
+
+        // given we vist the app (specifying an invalid redirect - incorrect protocol https)
+        webDriver.get(appUrl + "?redirect_uri=https://localhost:8080/app/");
+
+        // Sign in to login server
+        webDriver.findElement(By.name("username")).sendKeys(user.getUserName());
+        webDriver.findElement(By.name("password")).sendKeys(user.getPassword());
+        webDriver.findElement(By.xpath("//input[@value='Sign in']")).click();
+
+        // Authorize the app for some scopes
+        assertThat(webDriver.findElement(By.className("alert-error")).getText(), RegexMatcher.matchesRegex("^Invalid redirect (.*) did not match one of the registered values"));
+    }
+    
     private ScimUser createUnapprovedUser() throws Exception {
         String userName = "bob-" + new RandomValueStringGenerator().generate();
         String userEmail = userName + "@example.com";
@@ -132,7 +164,7 @@ public class AppApprovalIT {
 
         ScimUser user = new ScimUser();
         user.setUserName(userName);
-        user.setPassword("secret");
+        user.setPassword("s3Cretsecret");
         user.addEmail(userEmail);
         user.setActive(true);
         user.setVerified(true);
@@ -141,6 +173,30 @@ public class AppApprovalIT {
         assertEquals(HttpStatus.CREATED, result.getStatusCode());
 
         return user;
+    }
+    
+    public static class RegexMatcher extends TypeSafeMatcher<String> {
+
+        private final String regex;
+
+        public RegexMatcher(final String regex) {
+            this.regex = regex;
+        }
+
+        @Override
+        public void describeTo(final Description description) {
+            description.appendText("matches regex=`" + regex + "`");
+        }
+
+        @Override
+        public boolean matchesSafely(final String string) {
+            return string.matches(regex);
+        }
+
+
+        public static RegexMatcher matchesRegex(final String regex) {
+            return new RegexMatcher(regex);
+        }
     }
 
 }

@@ -7,3 +7,33 @@ ldap:
     password: 'password'
     searchBase: ''
     searchFilter: 'cn={0}'
+jwt:
+  token:
+    claims:
+      exclude:
+        - authorities
+    policy:
+      keys:
+        key-id-1:
+          signingKey: |
+            test-signing-key
+          verificationKey: |
+            test-verification-key
+cors:
+  xhr: &xhr
+    max_age: 1999999
+    allowed:
+      uris:
+        .*token$
+      credentials: true
+      headers:
+        - Accept
+        - Content-Type
+      origins:
+        - ^example.com.*
+        - foo.com
+      methods:
+        - GET
+        - POST
+        - PUT
+  default: *xhr
