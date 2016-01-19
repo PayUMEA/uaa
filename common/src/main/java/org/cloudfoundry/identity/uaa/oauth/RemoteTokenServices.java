@@ -23,7 +23,7 @@ import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.codehaus.jackson.map.ObjectMapper;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -69,8 +69,6 @@ public class RemoteTokenServices implements ResourceServerTokenServices {
 
     private String clientSecret;
 
-    private ObjectMapper mapper = new ObjectMapper();
-
     private boolean storeClaims = false;
 
     public RemoteTokenServices() {
@@ -93,7 +91,7 @@ public class RemoteTokenServices implements ResourceServerTokenServices {
     /**
      * Set to true to include all claims received from the UAA /check_token endpoint as string request parameters
      * accessible through OAuth2Authentication.getOAuth2Request().getRequestParameters()
-     * @param storeClaims
+     * @param storeClaims true to include all claims, otherwise false
      */
     public void setStoreClaims(boolean storeClaims) {
         this.storeClaims = storeClaims;
@@ -170,8 +168,8 @@ public class RemoteTokenServices implements ResourceServerTokenServices {
 
         if (map.containsKey(Claims.ADDITIONAL_AZ_ATTR)) {
             try {
-                requestParameters.put(Claims.ADDITIONAL_AZ_ATTR, mapper.writeValueAsString(map.get(Claims.ADDITIONAL_AZ_ATTR)));
-            } catch (IOException e) {
+                requestParameters.put(Claims.ADDITIONAL_AZ_ATTR, JsonUtils.writeValueAsString(map.get(Claims.ADDITIONAL_AZ_ATTR)));
+            } catch (JsonUtils.JsonUtilException e) {
                 throw new IllegalStateException("Cannot convert access token to JSON", e);
             }
         }

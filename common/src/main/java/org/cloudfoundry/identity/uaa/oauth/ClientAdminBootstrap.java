@@ -26,6 +26,8 @@ import org.apache.commons.logging.LogFactory;
 import org.cloudfoundry.identity.uaa.client.ClientConstants;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.provider.ClientDetailsService;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.oauth2.provider.ClientAlreadyExistsException;
 import org.springframework.security.oauth2.provider.ClientDetails;
@@ -49,6 +51,12 @@ public class ClientAdminBootstrap implements InitializingBean {
     private String domain = "cloudfoundry\\.com";
 
     private boolean defaultOverride = true;
+
+    private final PasswordEncoder passwordEncoder;
+
+    public ClientAdminBootstrap(PasswordEncoder passwordEncoder) {
+        this.passwordEncoder = passwordEncoder;
+    }
 
     /**
      * Flag to indicate that client details should override existing values by
@@ -75,6 +83,10 @@ public class ClientAdminBootstrap implements InitializingBean {
      */
     public void setDomain(String domain) {
         this.domain = domain.replace(".", "\\.");
+    }
+
+    public PasswordEncoder getPasswordEncoder() {
+        return passwordEncoder;
     }
 
     /**
@@ -167,12 +179,26 @@ public class ClientAdminBootstrap implements InitializingBean {
         }
     }
 
+    private String getRedirectUris(Map<String, Object> map) {
+        Set<String> redirectUris = new HashSet<>();
+        if (map.get("redirect-uri") != null) {
+            redirectUris.add((String) map.get("redirect-uri"));
+        }
+        if (map.get("signup_redirect_url") != null) {
+            redirectUris.add((String) map.get("signup_redirect_url"));
+        }
+        if (map.get("change_email_redirect_url") != null) {
+            redirectUris.add((String) map.get("change_email_redirect_url"));
+        }
+        return StringUtils.arrayToCommaDelimitedString(redirectUris.toArray(new String[] {}));
+    }
+
     private void addNewClients() throws Exception {
         for (String clientId : clients.keySet()) {
             Map<String, Object> map = clients.get(clientId);
             BaseClientDetails client = new BaseClientDetails(clientId, (String) map.get("resource-ids"),
                             (String) map.get("scope"), (String) map.get("authorized-grant-types"),
-                            (String) map.get("authorities"), (String) map.get("redirect-uri"));
+                            (String) map.get("authorities"), getRedirectUris(map));
             client.setClientSecret((String) map.get("secret"));
             Integer validity = (Integer) map.get("access-token-validity");
             Boolean override = (Boolean) map.get("override");
@@ -210,7 +236,7 @@ public class ClientAdminBootstrap implements InitializingBean {
                 if (override == null || override) {
                     logger.debug("Overriding client details for " + clientId);
                     clientRegistrationService.updateClientDetails(client);
-                    if (StringUtils.hasText(client.getClientSecret())) {
+                    if (StringUtils.hasText(client.getClientSecret()) && didPasswordChange(clientId, client.getClientSecret())) {
                         clientRegistrationService.updateClientSecret(clientId, client.getClientSecret());
                     }
                 } else {
@@ -218,6 +244,16 @@ public class ClientAdminBootstrap implements InitializingBean {
                     logger.debug(e.getMessage());
                 }
             }
+        }
+    }
+
+    protected boolean didPasswordChange(String clientId, String rawPassword) {
+        if (getPasswordEncoder()!=null && clientRegistrationService instanceof ClientDetailsService) {
+            ClientDetails existing = ((ClientDetailsService)clientRegistrationService).loadClientByClientId(clientId);
+            String existingPasswordHash = existing.getClientSecret();
+            return !getPasswordEncoder().matches(rawPassword, existingPasswordHash);
+        } else {
+            return true;
         }
     }
 }

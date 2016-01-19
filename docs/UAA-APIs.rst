@@ -29,7 +29,6 @@ Here is a summary of the different scopes that are known to the UAA.
 
 * **zones.read** - scope required to invoke the /identity-zones endpoint to read identity zones
 * **zones.write** - scope required to invoke the /identity-zones endpoint to create and update identity zones
-* **zones.<zone id>.admin** - user scope that permits operations in a designated zone, such as create identity providers or clients in another zone (used together with the X-Identity-Zone-Id header)
 * **idps.read** - read only scopes to retrieve identity providers under /identity-providers
 * **idps.write** - read only scopes to retrieve identity providers under /identity-providers
 * **clients.admin** - super user scope to create, modify and delete clients
@@ -40,7 +39,7 @@ Here is a summary of the different scopes that are known to the UAA.
 * **scim.read** - Admin read access to all SCIM endpoints, ``/Users``, ``/Groups/``.
 * **scim.create** - Reduced scope to be able to create a user using ``POST /Users`` (and verify their account using ``GET /Users/{id}/verify``) but not be able to modify, read or delete users.
 * **scim.userids** - ``/ids/Users`` - Required to convert a username+origin to a user ID and vice versa.
-* **scim.zones** - limited scope that only allows adding/removing a user to/from a group with name zones.<zone id>.admin under the path /Groups/zones
+* **scim.zones** - limited scope that only allows adding/removing a user to/from `zone management groups`_ under the path /Groups/zones
 * **password.write** - ``/User*/*/password`` endpoint. Admin scope to change a user's password.
 * **oauth.approval** - ``/approvals`` endpoint. Scope required to be able to approve/disapprove clients to act on a user's behalf. This is a default scope defined in uaa.yml.
 * **oauth.login** - Scope used to indicate a login application, such as external login servers, to perform trusted operations, such as create users not authenticated in the UAA.
@@ -51,6 +50,17 @@ Here is a summary of the different scopes that are known to the UAA.
 * **uaa.resource** - scope to indicate this is a resource server, used for the /check_token endpoint
 * **uaa.admin** - scope to indicate this is the super user
 * **uaa.none** - scope to indicate that this client will not be performing actions on behalf of a user
+
+.. _`zone management groups`:
+
+Zone Management Scopes
+
+* **zones.<zone id>.admin** - scope that permits operations in a designated zone by authenticating against the default zone, such as create identity providers or clients in another zone (used together with the X-Identity-Zone-Id header)
+* **zones.<zone id>.read** - scope that permits reading the given identity zone (used together with the X-Identity-Zone-Id header)
+* **zones.<zone id>.clients.admin** - translates into clients.admin after zone switch is complete (used together with the X-Identity-Zone-Id header)
+* **zones.<zone id>.clients.read** - translates into clients.read after zone switch is complete (used together with the X-Identity-Zone-Id header)
+* **zones.<zone id>.clients.write** - translates into clients.write after zone switch is complete (used together with the X-Identity-Zone-Id header)
+* **zones.<zone id>.idps.read** - translates into idps.read after zone switch is complete (used together with the X-Identity-Zone-Id header)
 
 A Note on Filtering
 ===================
@@ -229,6 +239,46 @@ URI.
 * ``curl -v -H "Accept:application/json" http://localhost:8080/uaa/login.do -d "username=marissa&password=koala" --cookie cookies.txt --cookie-jar cookies.txt``
 * ``curl -v -H "Accept:application/json" "http://localhost:8080/uaa/oauth/authorize?response_type=code&client_id=app&scope=password.write&redirect_uri=http%3A%2F%2Fwww.example.com%2Fcallback" --cookie cookies.txt --cookie-jar cookies.txt``
 * ``curl -v -H "Accept:application/json" http://localhost:8080/uaa/oauth/authorize -d "scope.0=scope.password.write&user_oauth_approval=true" --cookie cookies.txt --cookie-jar cookies.txt``
+
+API Authorization Requests Code: ``GET /oauth/authorize`` (non standard /oauth/authorize)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+* Request: ``GET /oauth/authorize``
+* Request Parameters:
+
+  * ``client_id=some_valid_client_id``
+  * ``scope=``
+  * ``response_type=code``
+  * ``redirect_uri`` - optional if the client has a redirect URI already registered.
+  * ``state`` - any random string - will be returned in the Location header as a query parameter
+
+* Request Header:
+
+  * Authorization: Bearer <token containing uaa.user scope> - the authentication for this user
+
+* Response Header: Containing the code::
+
+        HTTP/1.1 302 Found
+        Location: https://www.cloudfoundry.example.com?code=F45jH&state=<your state>
+        or in case of error
+        Location: https://www.cloudfoundry.example.com?error=<error code>
+
+* Response Codes::
+
+        302 - Found
+
+*Notes about this API*
+
+* The client must have autoapprove=true, or you will not get a code back
+* If the client doesn't have a redirect_uri registered, it is an required parameter of the request
+* The token must have scope "uaa.user" in order for this request to succeed
+
+*Sample curl commands for this flow*
+
+* curl -v -H"Authorization: Bearer $TOKEN" "http://localhost:8080/uaa/oauth/authorize?grant_type=authorization_code&client_id=identity&state=mystate&response_type=code&redirect_uri=http://localhost"
+* TOKEN can be fetched by: curl -v -XPOST -H"Application/json" -u "cf:" --data "username=marissa&password=koala&client_id=cf&grant_type=password&response_type=token" http://localhost:8080/uaa/oauth/token
+
 
 Client Obtains Token: ``POST /oauth/token``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -612,8 +662,9 @@ The UAA by default creates a ``default zone``. This zone will always be present,
 
 
 Create or Update Identity Zones: ``POST or PUT /identity-zones``
--------------------------------
+----------------------------------------------------------------
 An identity zone is created using a POST with an IdentityZone object. If the object contains an id, this id will be used as the identifier, otherwise an identifier will be generated. Once a zone has been created, the UAA will start accepting requests on the subdomain defined in the subdomain field of the identity zone.
+When an Identity Zone is created, an internal Identity Provider is automatically created with the default password policy.
 
 POST and PUT requires the ``zones.write`` scope.
 
@@ -685,13 +736,38 @@ Curl Example      POST (Token contains ``zones.write`` scope) ::
 
 ================  ========================================================================================
 
+Sequential example of creating a zone and creating an admin client in that zone
+-------------------------------------------------------------------------------
+Example::
+
+    uaac target http://localhost:8080/uaa
+
+    uaac token client get admin -s adminsecret
+
+    uaac client update admin --authorities "uaa.admin,clients.read,clients.write,clients.secret,scim.read,scim.write,clients.admin,zones.testzone1.admin,zones.write"
+
+    uaac token client get admin -s adminsecret
+
+    uaac -t curl -XPOST -H"Content-Type:application/json" -H"Accept:application/json" --data '{ "id":"testzone1", "subdomain":"testzone1", "name":"The Twiglet Zone[testzone1]", "version":0, "description":"Like the Twilight Zone but tastier[testzone1]."}' /identity-zones
+
+    uaac -t curl -H"X-Identity-Zone-Id:testzone1" -XPOST -H"Content-Type:application/json" -H"Accept:application/json" --data '{ "client_id" : "admin", "client_secret" : "adminsecret", "scope" : ["uaa.none"], "resource_ids" : ["none"], "authorities" : ["uaa.admin","clients.read","clients.write","clients.secret","scim.read","scim.write","clients.admin"], "authorized_grant_types" : ["client_credentials"]}' /oauth/clients
+
+    uaac target http://testzone1.localhost:8080/uaa
+
+    uaac token client get admin -s adminsecret
+
+    uaac token decode
+
+All operations after this, are exactly the same as against the default zone.
+
+
 List Identity Zones: ``GET /identity-zones``
 ------------------------------------
 
 ==============  ===========================================================================
 Request         ``GET /identity-zones``
 Request Header  Authorization: Bearer Token containing ``zones.read``
-Response code   ``200 OK`` 
+Response code   ``200 OK``
 Response body   *example* ::
 
 	              HTTP/1.1 200 OK
@@ -716,6 +792,29 @@ Response body   *example* ::
 		                  "last_modified":1426260091139
 		              }
 	              ]
+
+==============  ===========================================================================
+
+Get single identity zone: ``GET /identity-zones/{identityZoneId}``
+------------------------------------
+
+==============  ===========================================================================
+Request         ``GET /identity-zones/{identityZoneId}``
+Request Header  Authorization: Bearer Token containing ``zones.read`` or ``zones.<zoneid>.admin`` or ``zones.<zoneid>.read``
+Response code   ``200 OK``
+Response body   *example* ::
+
+	              HTTP/1.1 200 OK
+	              Content-Type: application/json
+	                  {
+	                      "id": "identity-zone-id",
+	                      "subdomain": "test",
+	                      "name": "test",
+	                      "version": 0,
+	                      "description": "The test zone",
+	                      "created": 946710000000,
+	                      "last_modified": 946710000000
+	                  }
 
 ==============  ===========================================================================
 
@@ -841,12 +940,16 @@ Curl Example      POST (Token contains ``zones.write`` scope) :: ::
 
 To create an arbitrary client in an Identity Zone, you must have the scope of zones.<zone-id>.admin. See create_zone_administrator_ to assign that scope to a user, then as that user, use the /oauth/clients endpoints, being sure to include the X-Identity-Zone-Id: <zone-id> header.
 
-Create Identity Provider API: ``/identity-providers``
------------------------------------------------------
+Identity Provider API: ``/identity-providers``
+----------------------------------------------
 
-Within an identity zone you can have one or more identity providers. Identity providers are authentication sources for a user. Each identity zone will have a default identity provider named ``internal``, with a type ``internal`` and originKey='uaa'. This is the internal user database for each zone and is represented by the SCIM schema for users.
+Within an identity zone you can have one or more identity providers. Identity providers are authentication sources for a user. Each identity zone will have a default identity provider named ``uaa``, with a type ``uaa`` and originKey='uaa'. This is the internal user database for each zone and is represented by the SCIM schema for users.
+
 The UAA supports two additional types of identity providers, SAML and LDAP, and these providers can be created for a given zone.
 Adding providers can be done by users that are Zone Administrators. These users are users in the UAA (default) zone, that have the scope ``zones.{zone id}.admin``. You can also create clients or users in the zone itself with the scopes ``idps.read`` and ``idps.write`` to perform these operations.
+
+Identity providers of type ``uaa`` are created with a default password policy. Password policies are JSON objects and can be updated by putting a new password policy object in the config field and doing an HTTP PUT. An example password policy can be found below.
+
 
 Steps to create a zone administrator
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -912,8 +1015,8 @@ Response body       *example* ::
                             "version":0,
                             "created":1426260091149,
                             "active":true,
-                            "identityZoneId":
-                            "testzone1",
+                            "allowInternalUserManagement":true,
+                            "identityZoneId":"testzone1",
                             "last_modified":1426260091149
                         }
                      ]
@@ -934,8 +1037,8 @@ Request body      *example* ::
                         "version":0,
                         "created":1426260091149,
                         "active":true,
-                        "identityZoneId":
-                        "testzone1"
+                        "allowInternalUserManagement":true,
+                        "identityZoneId":"testzone1"
                     }
 
 Response body     *example* ::
@@ -952,8 +1055,8 @@ Response body     *example* ::
                         "version":0,
                         "created":1426260091149,
                         "active":true,
-                        "identityZoneId":
-                        "testzone1",
+                        "allowInternalUserManagement":true,
+                        "identityZoneId":"testzone1",
                         "last_modified":1426260091149
                     }
 
@@ -964,6 +1067,7 @@ Response body     *example* ::
                     400 - Bad Request
                     401 - Unauthorized
                     403 - Forbidden - insufficient scope
+                    422 - Unprocessable Entity
 
 Fields            *Available Fields* ::
 
@@ -975,12 +1079,23 @@ Fields            *Available Fields* ::
                     originKey               String           Required Must be either an alias for a SAML provider or the value "ldap" for an LDAP provider. If the type is "internal", the originKey is "uaa"
                     config                  String           Required IDP Configuration in JSON format, see below
                     active                  boolean          Optional When set to true, this provider is active. When a provider is deleted this value is set to false
+                    allowInternalUserManagement     boolean          Optional When set to true (default), this provider allows users to be managed. (Effectively only used by the internal identity provider)
                     identityZoneId          String           Auto     Set to the zone that this provider will be active in. Determined either by the Host header or the zone switch header
                     created                 epoch timestamp  Auto     UAA sets the creation date
                     last_modified           epoch timestamp  Auto     UAA sets the modification date
 
-                    SAML Provider Configuration (provided in JSON format as part of the ``config`` field on the Identity Provider
-                    ======================  ===============  ======== =======================================================
+                    UAA Provider Configuration (provided in JSON format as part of the ``config`` field on the Identity Provider - See class org.cloudfoundry.identity.uaa.zone.UaaIdentityProviderDefinition
+                    ======================  ===============  ======== =================================================================================================================================================================================================
+                    minLength               int              Required Minimum number of characters for a user provided password, 0+
+                    maxLength               int              Required Maximum number of characters for a user provided password, 1+
+                    requireUpperCaseCharacter int            Required Minimum number of upper case characters for a user provided password, 0+
+                    requireLowerCaseCharacter int            Required Minimum number of lower case characters for a user provided password, 0+
+                    requireDigit            int              Required Minimum number of numbers for a user provided password, 0+
+                    requireSpecialCharacter int              Required Minimum number of special characters for a user provided password, 0+ Valid-List: !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+                    expirePasswordInMonths  int              Required Password expiration in months 0+ (0 means expiration is disabled)
+
+                    SAML Provider Configuration (provided in JSON format as part of the ``config`` field on the Identity Provider - See class org.cloudfoundry.identity.uaa.login.saml.SamlIdentityProviderDefinition
+                    ======================  ===============  ======== =================================================================================================================================================================================================
                     idpEntityAlias          String           Required Must match ``originKey`` in the provider definition
                     zoneId                  String           Required Must match ``identityZoneId`` in the provider definition
                     metaDataLocation        String           Required SAML Metadata - either an XML string or a URL that will deliver XML content
@@ -991,8 +1106,8 @@ Fields            *Available Fields* ::
                     linkText                String           Optional Required if the ``showSamlLink`` is set to true.
                     iconUrl                 String           Optional Reserved for future use
 
-                    LDAP Provider Configuration (provided in JSON format as part of the ``config`` field on the Identity Provider
-                    ======================      ===============  ======== =======================================================
+                    LDAP Provider Configuration (provided in JSON format as part of the ``config`` field on the Identity Provider - See class org.cloudfoundry.identity.uaa.ldap.LdapIdentityProviderDefinition
+                    ======================  ===============  ======== =================================================================================================================================================================================================
                     ldapProfileFile             String           Required Value must be "ldap/ldap-search-and-bind.xml" (until other configuration options are supported)
                     ldapGroupFile               String           Required Value must be "ldap/ldap-groups-map-to-scopes.xml" (until other configuration options are supported)
                     baseUrl                     String           Required URL to LDAP server, starts with ldap:// or ldaps://
@@ -1008,7 +1123,7 @@ Fields            *Available Fields* ::
                     autoAddGroups               boolean          Required Currently not used
                     groupSearchSubTree          boolean          Required Should the sub tree be searched for user groups
                     groupMaxSearchDepth         int              Required When searching for nested groups (groups within groups)
-                    skipSSLVerification         boolean          Optional Set to true if you wish to skip SSL certificate verification (
+                    skipSSLVerification         boolean          Optional Set to true if you wish to skip SSL certificate verification
 
 Curl Example      POST (Creating a SAML provider)::
 
@@ -1028,6 +1143,16 @@ Curl Example      POST (Creating an LDAP provider)::
                       -H"X-Identity-Zone-Id:testzone1" \
                       -d '{"originKey":"ldap","name":"myldap for testzone1","type":"ldap","config":"{\"baseUrl\":\"ldaps://localhost:33636\",\"skipSSLVerification\":true,\"bindUserDn\":\"cn=admin,ou=Users,dc=test,dc=com\",\"bindPassword\":\"adminsecret\",\"userSearchBase\":\"dc=test,dc=com\",\"userSearchFilter\":\"cn={0}\",\"groupSearchBase\":\"ou=scopes,dc=test,dc=com\",\"groupSearchFilter\":\"member={0}\",\"mailAttributeName\":\"mail\",\"mailSubstitute\":null,\"ldapProfileFile\":\"ldap/ldap-search-and-bind.xml\",\"ldapGroupFile\":\"ldap/ldap-groups-map-to-scopes.xml\",\"mailSubstituteOverridesLdap\":false,\"autoAddGroups\":true,\"groupSearchSubTree\":true,\"maxGroupSearchDepth\":10}","active":true,"identityZoneId":"testzone1"}' \
                       http://localhost:8080/uaa/identity-providers
+
+Curl Example      PUT (Updating a UAA provider)::
+
+                    curl -v -H"Authorization:Bearer $TOKEN" \
+                      -XPUT -H"Accept:application/json" \
+                      -H"Content-Type:application/json" \
+                      -H"X-Identity-Zone-Id:testzone1" \
+                      -d '{"originKey":"uaa","name":"uaa","type":"uaa","config":"{\"passwordPolicy\":{\"minLength\":6,\"maxLength\":128,\"requireUpperCaseCharacter\":1,\"requireLowerCaseCharacter\":1,\"requireDigit\":1,\"requireSpecialCharacter\":0,\"expirePasswordInMonths\":0}}"' \
+                      http://localhost:8080/uaa/identity-providers/[identity_provider_id]
+
 
 ================  ==========================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
@@ -1100,7 +1225,7 @@ Create a User: ``POST /Users``
 
 See `SCIM - Creating Resources`__
 
-__ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#create-resource
+__ http://www.simplecloud.info/specs/draft-scim-api-01.html#create-resource
 
 ================  ==========================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 Request           ``POST /Users``
@@ -1199,7 +1324,7 @@ Curl Example      POST Create a user::
 Update a User: ``PUT /Users/{id}``
 ----------------------------------
 
-See `SCIM - Modifying with PUT <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#edit-resource-with-put>`_
+See `SCIM - Modifying with PUT <http://www.simplecloud.info/specs/draft-scim-api-01.html#edit-resource-with-put>`_
 
 
 ================  ==========================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
@@ -1373,7 +1498,7 @@ Curl Example      DELETE Delete a user::
 Change Password: ``PUT /Users/{id}/password``
 ---------------------------------------------
 
-See `SCIM - Changing Password <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#change-password>`_
+See `SCIM - Changing Password <http://www.simplecloud.info/specs/draft-scim-api-01.html#change-password>`_
 
 * Request: ``PUT /Users/{id}/password``
 * Request Headers: Authorization header containing an `OAuth2`_ bearer token with::
@@ -1445,7 +1570,7 @@ Query for Information: ``GET /Users``
 
 See `SCIM - List/Query Resources`__
 
-__ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#query-resources
+__ http://www.simplecloud.info/specs/draft-scim-api-01.html#query-resources
 
 Get information about a user. This is needed by to convert names and email addresses to immutable ids, and immutable ids to display names. The implementation provides the core schema from the specification, but not all attributes are handled in the back end at present (e.g. only one email address per account).
 
@@ -1501,7 +1626,7 @@ Query for the existence of a specific username.
 Delete a User: ``DELETE /Users/{id}``
 -------------------------------------
 
-See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#delete-resource>`_.
+See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-api-01.html#delete-resource>`_.
 
 * Request: ``DELETE /Users/{id}``
 * Request Headers:
@@ -1556,17 +1681,7 @@ Wildcard searches such as ``sw`` or ``co`` are not allowed. This endpoint requir
 Query the strength of a password: ``POST /password/score``
 ----------------------------------------------------------
 
-The password strength API is not part of SCIM but is provided as a service to allow user management applications to use the same password quality
-checking mechanism as the UAA itself. Rather than specifying a set of rules based on the included character types (upper and lower case, digits, symbols etc), the UAA
-exposes this API which accepts a candidate password and returns a JSON message containing a simple numeric score (between 0 and 10) and a required score
-(one which is acceptable to the UAA). The score is based on a calculation using the ideas from the  `zxcvbn project`_.
-
-.. _zxcvbn project: http://tech.dropbox.com/?p=165
-
-The use of this API does not guarantee that a password is strong (it is currently limited to English dictionary searches, for example), but it will protect against some of
-the worst choices that people make and will not unnecessarily penalise strong passwords. In addition to the password parameter itself, the client can pass a
-comma-separated list of user-specific data in the ``userData`` parameter. This can be used to pass things like the username, email or other biographical
-information known to the client which should result in a low score if it is used as part of the password.
+ENDPOINT DEPRECATED - Will always return score:0 and requiredScore:0
 
 * Request: ``POST /password/score``
 
@@ -1579,8 +1694,9 @@ information known to the client which should result in a low score if it is used
 * Response
     HTTP/1.1 200 OK
     Content-Type: application/json
+    X-Cf-Warnings: Endpoint+deprecated
 
-    {"score": 0, "requiredScore": 5}
+    {"score": 0, "requiredScore": 0}
 
 
 Group Management APIs
@@ -1594,7 +1710,7 @@ Create a Group: ``POST /Groups``
 
 See `SCIM - Creating Resources`__
 
-__ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#create-resource
+__ http://www.simplecloud.info/specs/draft-scim-api-01.html#create-resource
 
 * Request: ``POST /Groups``
 * Request Headers: Authorization header containing an `OAuth2`_ bearer token with::
@@ -1605,14 +1721,15 @@ __ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#create-resource
 * Request Body::
 
         {
-          "schemas":["urn:scim:schemas:core:1.0"],
           "displayName":"uaa.admin",
           "members":[
-	      { "type":"USER","authorities":["READ"],"value":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f" }
+	      { "type":"USER","authorities":["READ"],"value":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f","origin":"uaa" }
 	  ]
         }
 
 The ``displayName`` is unique in the UAA, but is allowed to change.  Each group also has a fixed primary key which is a UUID (stored in the ``id`` field of the core schema).
+The origin value shows what identity provider was responsible for making the connection between the user and the group. For example, if this
+relationship came from an LDAP user, it would have origin=ldap.
 
 * Response Body::
 
@@ -1631,7 +1748,7 @@ The ``displayName`` is unique in the UAA, but is allowed to change.  Each group 
           },
           "displayName":"uaa.admin",
           "members":[
-	      { "type":"USER","authorities":["READ"],"value":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f" }
+	      { "type":"USER","authorities":["READ"],"value":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f","origin":"uaa" }
           ]
         }
 
@@ -1646,7 +1763,7 @@ The members.value sub-attributes MUST refer to a valid SCIM resource id in the U
 Update a Group: ``PUT /Groups/{id}``
 ------------------------------------
 
-See `SCIM - Modifying with PUT <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#edit-resource-with-put>`_
+See `SCIM - Modifying with PUT <http://www.simplecloud.info/specs/draft-scim-api-01.html#edit-resource-with-put>`_
 
 * Request: ``PUT /Groups/{id}``
 * Request Headers:
@@ -1677,8 +1794,8 @@ See `SCIM - Modifying with PUT <http://www.simplecloud.info/specs/draft-scim-res
             "lastModified":"2011-12-30T21:11:30.000Z"
           },
           "members":[
-             {"type":"USER","authorities":["READ"],"value":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f"},
-             {"type":"USER","authorities":["READ", "WRITE"],"value":"40c44bda-8b70-f771-74a2-3ebe4bda40c4"}
+             {"type":"USER","authorities":["READ"],"value":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f","origin":"uaa"},
+             {"type":"USER","authorities":["READ", "WRITE"],"value":"40c44bda-8b70-f771-74a2-3ebe4bda40c4","origin":"uaa"}
           ]
         }
 
@@ -1702,7 +1819,7 @@ Query for Information: ``GET /Groups``
 
 See `SCIM - List/Query Resources`__
 
-__ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#query-resources
+__ http://www.simplecloud.info/specs/draft-scim-api-01.html#query-resources
 
 Get information about a group, including its members and what roles they hold within the group itself, i.e which members are group admins vs. which members are just members, and so on.
 
@@ -1714,7 +1831,7 @@ Filters: note that, per the specification, attribute values are comma separated 
         scope = scim.read
         aud = scim
 
-* Response Body (for ``GET /Groups?attributes=id&filter=displayName eq uaa.admin``)::
+* Response Body (for ``GET /Groups?attributes=id&filter=displayName eq "uaa.admin"``)::
 
         HTTP/1.1 200 OK
         Content-Type: application/json
@@ -1739,7 +1856,7 @@ Filters: note that, per the specification, attribute values are comma separated 
 Delete a Group: ``DELETE /Groups/{id}``
 ---------------------------------------
 
-See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#delete-resource>`_.
+See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-api-01.html#delete-resource>`_.
 
 * Request: ``DELETE /Groups/{id}``
 * Request Headers:
@@ -1761,12 +1878,12 @@ See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-res
 
 Deleting a group also removes the group from the 'groups' sub-attribute on users who were members of the group.
 
-Create a Zone Administrator (add zones.{id}.admin to a user}: ``POST /Groups/zones``
+Create a Zone Manager (add a user to any of the `zone management groups`_): ``POST /Groups/zones``
 ------------------------------------------------------------------------------------
 
 See `SCIM - Creating Resources`__
 
-__ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#create-resource
+__ http://www.simplecloud.info/specs/draft-scim-api-01.html#create-resource
 
 .. _create_zone_administrator:
 
@@ -1787,6 +1904,14 @@ __ http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#create-resource
         }
 
 The ``displayName`` is unique in the UAA, but is allowed to change.  Each group also has a fixed primary key which is a UUID (stored in the ``id`` field of the core schema).
+The following zone management scopes are supported:
+
+- zones.{zone id}.admin
+- zones.{zone id}.idps.read
+- zones.{zone id}.clients.admin
+- zones.{zone id}.clients.write
+- zones.{zone id}.clients.read
+
 
 * Response Body::
 
@@ -1824,12 +1949,12 @@ The ``displayName`` is unique in the UAA, but is allowed to change.  Each group 
 
 The members.value sub-attributes MUST refer to a valid SCIM resource id in the UAA, i.e the UUID of an existing SCIM user or group.
 
-Remove a zone administrator: ``DELETE /Groups/zones/{userId}/{zoneId}``
+Remove a zone administrator: ``DELETE /Groups/zones/{userId}/{zoneId}/{scope}``
 -----------------------------------------------------------------------
 
-See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-rest-api-01.html#delete-resource>`_.
+See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-api-01.html#delete-resource>`_.
 
-* Request: ``DELETE /Groups/zones/{userId}/{zoneId}``
+* Request: ``DELETE /Groups/zones/{userId}/{zoneId}/{scope}``
 * Request Headers:
 
   + Authorization header containing an OAuth2_ bearer token with::
@@ -1848,7 +1973,13 @@ See `SCIM - Deleting Resources <http://www.simplecloud.info/specs/draft-scim-res
         403 - Forbidden
         404 - Not found
 
+The scope path variable can be one of the following
 
+- admin
+- idps.read
+- clients.admin
+- clients.write
+- clients.read
 
 List External Group mapping: ``GET /Groups/External``
 -----------------------------------------------------
@@ -1878,11 +2009,11 @@ The API ``GET /Groups/External/list`` is deprecated
       Content-Type: application/json
       {"resources":
         [
-            {"groupId":"79f37b92-21db-4a3e-a28c-ff93df476eca","displayName":"internal.write","externalGroup":"cn=operators,ou=scopes,dc=test,dc=com"},
-            {"groupId":"e66c720f-6f4b-4fb5-8b0a-37818045b5b7","displayName":"internal.superuser","externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"},
-            {"groupId":"ef325dad-63eb-46e6-800b-796f254e13ee","displayName":"organizations.acme","externalGroup":"cn=test_org,ou=people,o=springsource,o=org"},
-            {"groupId":"f149154e-c131-4e84-98cf-05aa94cc6b4e","displayName":"internal.everything","externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"},
-            {"groupId":"f2be2506-45e3-412e-9d85-6420d7e4afe4","displayName":"internal.read","externalGroup":"cn=developers,ou=scopes,dc=test,dc=com"}
+            {"groupId":"79f37b92-21db-4a3e-a28c-ff93df476eca","displayName":"internal.write","externalGroup":"cn=operators,ou=scopes,dc=test,dc=com","origin":"ldap"},
+            {"groupId":"e66c720f-6f4b-4fb5-8b0a-37818045b5b7","displayName":"internal.superuser","externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com","origin":"ldap"},
+            {"groupId":"ef325dad-63eb-46e6-800b-796f254e13ee","displayName":"organizations.acme","externalGroup":"cn=test_org,ou=people,o=springsource,o=org","origin":"ldap"},
+            {"groupId":"f149154e-c131-4e84-98cf-05aa94cc6b4e","displayName":"internal.everything","externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com","origin":"ldap"},
+            {"groupId":"f2be2506-45e3-412e-9d85-6420d7e4afe4","displayName":"internal.read","externalGroup":"cn=developers,ou=scopes,dc=test,dc=com","origin":"ldap"}
         ],
         "startIndex":1,
         "itemsPerPage":100,
@@ -1911,17 +2042,17 @@ Creates a group mapping with an internal UAA groups (scope) and an external grou
 * Request Body(using group name)::
 
         {
-          "schemas":["urn:scim:schemas:core:1.0"],
           "displayName":"uaa.admin",
-          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com",
+          "origin":"ldap"
         }
 
 * Request Body(using group ID)::
 
         {
-          "schemas":["urn:scim:schemas:core:1.0"],
           "groupId":"f2be2506-45e3-412e-9d85-6420d7e4afe3",
-          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com",
+          "origin":"ldap"
         }
 
 The ``displayName`` is unique in the UAA, but is allowed to change.  Each group also has a fixed primary key which is a UUID (stored in the ``id`` field of the core schema).
@@ -1944,7 +2075,8 @@ It is possible to substitute the ``displayName`` field with a ``groupId`` field 
           },
           "displayName":"uaa.admin",
           "groupId":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f",
-          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+          "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com",
+          "origin":"ldap"
         }
 
 * Response Codes::
@@ -1953,13 +2085,13 @@ It is possible to substitute the ``displayName`` field with a ``groupId`` field 
         400 - Bad Request (unparseable, syntactically incorrect etc)
         401 - Unauthorized
 
-Remove a Group mapping: ``DELETE /Groups/External/groupId/{groupId}/externalGroup/{externalGroup}``
+Remove a Group mapping: ``DELETE /Groups/External/groupId/{groupId}/externalGroup/{externalGroup}/origin/{origin}``
 ---------------------------------------------------------------------------------------------------
 
 Removes the group mapping between an internal UAA groups (scope) and an external group, for example LDAP DN.
 The API ``DELETE /Groups/External/id/{groupId}/{externalGroup}`` is deprecated
 
-* Request: ``DELETE /Groups/External/groupId/3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f/externalGroup/cn=superusers,ou=scopes,dc=test,dc=com``
+* Request: ``DELETE /Groups/External/groupId/3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f/externalGroup/cn=superusers,ou=scopes,dc=test,dc=com/origin/ldap``
 * Request Headers: Authorization header containing an `OAuth2`_ bearer token with::
 
         scope = scim.write
@@ -1991,13 +2123,13 @@ The API ``DELETE /Groups/External/id/{groupId}/{externalGroup}`` is deprecated
         400 - Bad Request (unparseable, syntactically incorrect etc)
         401 - Unauthorized
 
-Remove a Group mapping: ``DELETE /Groups/External/displayName/{displayName}/externalGroup/{externalGroup}``
+Remove a Group mapping: ``DELETE /Groups/External/displayName/{displayName}/externalGroup/{externalGroup}/origin/{origin}``
 -----------------------------------------------------------------------------------------------------------
 
 Removes the group mapping between an internal UAA groups (scope) and an external group, for example LDAP DN.
 The API ``DELETE /Groups/External/{displayName}/{externalGroup}`` is deprecated
 
-* Request: ``DELETE /Groups/External/displayName/internal.everything/externalGroup/cn=superusers,ou=scopes,dc=test,dc=com``
+* Request: ``DELETE /Groups/External/displayName/internal.everything/externalGroup/cn=superusers,ou=scopes,dc=test,dc=com/origin/ldap``
 * Request Headers: Authorization header containing an `OAuth2`_ bearer token with::
 
         scope = scim.write
@@ -2021,6 +2153,7 @@ The API ``DELETE /Groups/External/{displayName}/{externalGroup}`` is deprecated
           "displayName":"internal.everything",
           "groupId":"3ebe4bda-74a2-40c4-8b70-f771d9bc8b9f",
           "externalGroup":"cn=superusers,ou=scopes,dc=test,dc=com"
+          "origin":"ldap"
         }
 
 * Response Codes::
@@ -2039,7 +2172,7 @@ Get the Token Signing Key: ``GET /token_key``
 
 An endpoint which returns the JWT token key, used by the UAA to sign JWT access tokens, and to be used by authorized clients to verify that a token came from the UAA.
 Key is in JSON Web Key format, for RSA public keys, the values n, modulues, and e, exponent, are available.
-This call is authenticated with client credentials using the HTTP Basic method.
+In the case when the token key is symmetric, signer key and verifier key are the same, then this call is authenticated with client credentials using the HTTP Basic method.
 
 ================  =======================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 Request           ``GET /token_key``
@@ -2373,6 +2506,42 @@ Response body   an array of the deleted clients
 Transactional   either all clients get deleted or none
 ==============  ===============================================
 
+List Restricted Scopes: ``GET /oauth/clients/restricted``
+---------------------------------------------------------
+
+The UAA also supports creating and modifying clients that are considered 'restricted'.
+The definition of a restricted client is a client that does not have any UAA admin scopes/
+The operations to the the restricted endpoints follow the same syntax as creating, updating
+clients using the regular APIs. If the client being created or updated contains
+a restricted scopes or authorities, a 400 Bad Request is returned.
+
+==============  ===========================================================================
+Request         ``GET /oauth/clients/restricted``
+Request body    none
+Response code   ``200 OK`` if successful
+Response body   List<String> - a list of scopes that are considered admin scopes in the UAA
+==============  ===========================================================================
+
+Creating Restricted Client: ``POST /oauth/clients/restricted``
+--------------------------------------------------------------
+
+==============  ===========================================================================
+Request         ``POST /oauth/clients/restricted``
+Request body    ClientDetails
+Response code   ``201 CREATED`` if successful, 400 if validation of restricted scopes fails
+Response body   ClientDetails - the newly created client
+==============  ===========================================================================
+
+
+Updating Restricted Client: ``PUT /oauth/clients/restricted/{client_id}``
+-------------------------------------------------------------------------
+
+==============  ===========================================================================
+Request         ``PUT /oauth/clients/restricted/{client_id}``
+Request body    ClientDetails
+Response code   ``200 OK`` if successful, 400 if validation of restricted scopes fails
+Response body   ClientDetails - the newly created client
+==============  ===========================================================================
 
 UI Endpoints
 ============

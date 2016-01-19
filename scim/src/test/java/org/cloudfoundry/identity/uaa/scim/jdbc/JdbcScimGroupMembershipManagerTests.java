@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -11,6 +11,25 @@
  *     subcomponent's license, as noted in the LICENSE file.
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.jdbc;
+
+import org.cloudfoundry.identity.uaa.authentication.Origin;
+import org.cloudfoundry.identity.uaa.rest.jdbc.JdbcPagingListFactory;
+import org.cloudfoundry.identity.uaa.scim.ScimGroup;
+import org.cloudfoundry.identity.uaa.scim.ScimGroupMember;
+import org.cloudfoundry.identity.uaa.scim.exception.InvalidScimResourceException;
+import org.cloudfoundry.identity.uaa.scim.exception.MemberNotFoundException;
+import org.cloudfoundry.identity.uaa.scim.exception.ScimResourceConstraintFailedException;
+import org.cloudfoundry.identity.uaa.scim.exception.ScimResourceNotFoundException;
+import org.cloudfoundry.identity.uaa.scim.test.TestUtils;
+import org.cloudfoundry.identity.uaa.test.JdbcTestBase;
+import org.cloudfoundry.identity.uaa.zone.IdentityZone;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.cloudfoundry.identity.uaa.zone.MultitenancyFixture;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -25,19 +44,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import org.cloudfoundry.identity.uaa.authentication.Origin;
-import org.cloudfoundry.identity.uaa.rest.jdbc.JdbcPagingListFactory;
-import org.cloudfoundry.identity.uaa.scim.ScimGroup;
-import org.cloudfoundry.identity.uaa.scim.ScimGroupMember;
-import org.cloudfoundry.identity.uaa.scim.exception.InvalidScimResourceException;
-import org.cloudfoundry.identity.uaa.scim.exception.MemberNotFoundException;
-import org.cloudfoundry.identity.uaa.scim.test.TestUtils;
-import org.cloudfoundry.identity.uaa.scim.validate.NullPasswordValidator;
-import org.cloudfoundry.identity.uaa.test.JdbcTestBase;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
 
@@ -49,7 +55,7 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
 
     private static final String addUserSqlFormat = "insert into users (id, username, password, email, givenName, familyName, phoneNumber, authorities ,identity_zone_id) values ('%s','%s','%s','%s','%s','%s','%s','%s','%s')";
 
-    private static final String addGroupSqlFormat = "insert into groups (id, displayName) values ('%s','%s')";
+    private static final String addGroupSqlFormat = "insert into groups (id, displayName, identity_zone_id) values ('%s','%s','%s')";
 
     private static final String addMemberSqlFormat = "insert into group_membership (group_id, member_id, member_type, authorities, origin) values ('%s', '%s', '%s', '%s', '%s')";
 
@@ -60,7 +66,6 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
 
         JdbcPagingListFactory pagingListFactory = new JdbcPagingListFactory(template, limitSqlAdapter);
         udao = new JdbcScimUserProvisioning(template, pagingListFactory);
-        udao.setPasswordValidator(new NullPasswordValidator());
         gdao = new JdbcScimGroupProvisioning(template, pagingListFactory);
 
         dao = new JdbcScimGroupMembershipManager(template, pagingListFactory);
@@ -68,12 +73,12 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
         dao.setScimUserProvisioning(udao);
         dao.setDefaultUserGroups(Collections.singleton("uaa.user"));
 
-        addGroup("g1", "test1");
-        addGroup("g2", "test2");
-        addGroup("g3", "test3");
-        addUser("m1", "test");
-        addUser("m2", "test");
-        addUser("m3", "test");
+        addGroup("g1", "test1", IdentityZone.getUaa().getId());
+        addGroup("g2", "test2", IdentityZone.getUaa().getId());
+        addGroup("g3", "test3", IdentityZone.getUaa().getId());
+        addUser("m1", "test", IdentityZone.getUaa().getId());
+        addUser("m2", "test", IdentityZone.getUaa().getId());
+        addUser("m3", "test", IdentityZone.getUaa().getId());
 
         validateCount(0);
     }
@@ -85,18 +90,18 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
         jdbcTemplate.execute(String.format(addMemberSqlFormat, gId, mId, mType, authorities, origin));
     }
 
-    private void addGroup(String id, String name) {
+    private void addGroup(String id, String name, String zoneId) {
         TestUtils.assertNoSuchUser(jdbcTemplate, "id", id);
-        jdbcTemplate.execute(String.format(addGroupSqlFormat, id, name));
+        jdbcTemplate.execute(String.format(addGroupSqlFormat, id, name, zoneId));
     }
 
-    private void addUser(String id, String password) {
+    private void addUser(String id, String password, String zoneId) {
         TestUtils.assertNoSuchUser(jdbcTemplate, "id", id);
-        jdbcTemplate.execute(String.format(addUserSqlFormat, id, id, password, id, id, id, id, "", "uaa"));
+        jdbcTemplate.execute(String.format(addUserSqlFormat, id, id, password, id, id, id, id, "", zoneId));
     }
 
     private void validateCount(int expected) {
-        int existingMemberCount = jdbcTemplate.queryForInt("select count(*) from group_membership");
+        int existingMemberCount = jdbcTemplate.queryForInt("select count(*) from groups g, group_membership gm where g.identity_zone_id=? and gm.group_id=g.id", IdentityZoneHolder.get().getId());
         assertEquals(expected, existingMemberCount);
     }
 
@@ -109,7 +114,7 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
 
         Set<String> expectedAuthorities = Collections.<String> emptySet();
         if (gNm != null) {
-            expectedAuthorities = new HashSet<String>(Arrays.asList(gNm));
+            expectedAuthorities = new HashSet<>(Arrays.asList(gNm));
         }
         expectedAuthorities.add("uaa.user");
 
@@ -124,18 +129,29 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
 
     @After
     public void cleanupDataSource() throws Exception {
+        IdentityZoneHolder.clear();
         TestUtils.deleteFrom(dataSource, "group_membership");
         TestUtils.deleteFrom(dataSource, "groups");
         TestUtils.deleteFrom(dataSource, "users");
-
         validateCount(0);
     }
+
+    @Test
+    public void canQuery_Filter_Has_ZoneIn_Effect() throws Exception {
+        addMembers();
+        validateCount(4);
+        String id = new RandomValueStringGenerator().generate();
+        IdentityZone zone = MultitenancyFixture.identityZone(id,id);
+        IdentityZoneHolder.set(zone);
+        assertEquals(0,dao.query("origin eq \"" + Origin.UAA + "\"").size());
+    }
+
 
     @Test
     public void canDeleteWithFilter1() throws Exception {
         addMembers();
         validateCount(4);
-        dao.delete("origin eq \""+ Origin.UAA +"\"");
+        dao.delete("origin eq \"" + Origin.UAA + "\"");
         validateCount(0);
     }
 
@@ -170,6 +186,19 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
         dao.delete("member_id sw \"m\" and origin eq \""+ Origin.LDAP +"\"");
         validateCount(4);
     }
+
+    @Test
+    public void cannot_Delete_With_Filter_Outside_Zone() throws Exception {
+        String id = new RandomValueStringGenerator().generate();
+        addMembers();
+        validateCount(4);
+        IdentityZone zone = MultitenancyFixture.identityZone(id,id);
+        IdentityZoneHolder.set(zone);
+        dao.delete("member_id eq \"m3\" and origin eq \"" + Origin.UAA + "\"");
+        IdentityZoneHolder.clear();
+        validateCount(4);
+    }
+
 
     @Test
     public void canGetGroupsForMember() {
@@ -215,6 +244,27 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
         validateUserGroups("m1", "test2");
     }
 
+    @Test(expected = ScimResourceNotFoundException.class)
+    public void addMember_In_Different_Zone_Causes_Issues() throws Exception {
+        String subdomain = new RandomValueStringGenerator().generate();
+        IdentityZone otherZone = MultitenancyFixture.identityZone(subdomain, subdomain);
+        IdentityZoneHolder.set(otherZone);
+        ScimGroupMember m1 = new ScimGroupMember("m1", ScimGroupMember.Type.USER, null);
+        m1.setOrigin(Origin.UAA);
+        dao.addMember("g2", m1);
+    }
+
+    @Test(expected = ScimResourceNotFoundException.class)
+    public void canAddMember_Validate_Origin_and_ZoneId() throws Exception {
+        String subdomain = new RandomValueStringGenerator().generate();
+        IdentityZone otherZone = MultitenancyFixture.identityZone(subdomain, subdomain);
+        IdentityZoneHolder.set(otherZone);
+        validateCount(0);
+        ScimGroupMember m1 = new ScimGroupMember("m1", ScimGroupMember.Type.USER, null);
+        m1.setOrigin(Origin.UAA);
+        dao.addMember("g2", m1);
+    }
+
     @Test
     public void canAddNestedGroupMember() {
         addMember("g2", "m1", "USER", "READER");
@@ -247,6 +297,15 @@ public class JdbcScimGroupMembershipManagerTests extends JdbcTestBase {
         assertNotNull(members);
         assertEquals(0, members.size());
 
+    }
+
+    @Test
+    public void canGetMembers_Fails_In_Other_Zone() throws Exception {
+        addMember("g1", "m1", "USER", "READER");
+        addMember("g1", "g2", "GROUP", "READER");
+        addMember("g3", "m2", "USER", "READER,WRITER");
+        IdentityZoneHolder.set(MultitenancyFixture.identityZone(new RandomValueStringGenerator().generate(), new RandomValueStringGenerator().generate()));
+        assertEquals(0, dao.getMembers("g1").size());
     }
 
     @Test

@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -18,7 +18,7 @@ import org.springframework.security.core.GrantedAuthority;
 
 import java.util.Collection;
 
-public class ExternalGroupAuthorizationEvent extends NewUserAuthenticatedEvent {
+public class ExternalGroupAuthorizationEvent extends AuthEvent {
 
     public Collection<? extends GrantedAuthority> getExternalAuthorities() {
         return externalAuthorities;
@@ -28,8 +28,8 @@ public class ExternalGroupAuthorizationEvent extends NewUserAuthenticatedEvent {
 
     private boolean addGroups = false;
 
-    public ExternalGroupAuthorizationEvent(UaaUser user, Collection<? extends GrantedAuthority> externalAuthorities, boolean addGroups) {
-        super(user);
+    public ExternalGroupAuthorizationEvent(UaaUser user, boolean userModified, Collection<? extends GrantedAuthority> externalAuthorities, boolean addGroups) {
+        super(user, userModified);
         this.addGroups = addGroups;
         this.externalAuthorities = externalAuthorities;
     }
@@ -37,6 +37,4 @@ public class ExternalGroupAuthorizationEvent extends NewUserAuthenticatedEvent {
     public boolean isAddGroups() {
         return addGroups;
     }
-
-
 }

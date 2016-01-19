@@ -5,17 +5,27 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.http.HttpMethod.PUT;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import org.cloudfoundry.identity.uaa.zone.IdentityZone;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.cloudfoundry.identity.uaa.zone.MultitenancyFixture;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 public class NotificationsServiceTest {
@@ -41,7 +51,13 @@ public class NotificationsServiceTest {
         passwordResetNotification.put("critical", true);
         notifications.put(MessageType.PASSWORD_RESET, passwordResetNotification);
 
-        notificationsService = new NotificationsService(notificationsTemplate, "http://notifications.example.com", notifications);
+        notificationsService = new NotificationsService(notificationsTemplate, "http://notifications.example.com", notifications, true) {
+            @Override
+            protected void internalSendMessage(String email, MessageType messageType, String subject, String htmlContent) {
+                assertEquals(IdentityZone.getUaa(), IdentityZoneHolder.get());
+                super.internalSendMessage(email, messageType, subject, htmlContent);
+            }
+        };
 
         response = new HashMap<>();
         List<Map<String, String>> resources = new ArrayList<>();
@@ -59,32 +75,31 @@ public class NotificationsServiceTest {
             .andRespond(withSuccess());
     }
 
-    @Test
-    public void testSendMessageToUserId() throws Exception {
+    @After
+    public void clearZone() {
+        IdentityZoneHolder.clear();
+    }
 
-        mockNotificationsServer.expect(requestTo("http://notifications.example.com/users/user-id-01"))
+    @Test
+    public void testSendingMessageToEmailAddress() throws Exception {
+
+        mockNotificationsServer.expect(requestTo("http://notifications.example.com/emails"))
             .andExpect(method(POST))
             .andExpect(jsonPath("$.kind_id").value("kind-id-01"))
+            .andExpect(jsonPath("$.to").value("user@example.com"))
             .andExpect(jsonPath("$.subject").value("First message"))
-            .andExpect(jsonPath("$.html").value("<p>Text</p>"))
+            .andExpect(jsonPath("$.html").value("<p>Message</p>"))
             .andRespond(withSuccess());
 
-        mockNotificationsServer.expect(requestTo("http://notifications.example.com/users/user-id-01"))
-            .andExpect(method(POST))
-            .andExpect(jsonPath("$.subject").value("Second message"))
-            .andRespond(withSuccess());
-
-        notificationsService.sendMessage("user-id-01", "user@example.com", MessageType.PASSWORD_RESET, "First message", "<p>Text</p>");
-
-        assertTrue(notificationsService.getIsNotificationsRegistered());
-
-        notificationsService.sendMessage("user-id-01", null, MessageType.PASSWORD_RESET, "Second message", "<p>Text</p>");
+        notificationsService.sendMessage("user@example.com", MessageType.PASSWORD_RESET, "First message", "<p>Message</p>");
 
         mockNotificationsServer.verify();
     }
 
     @Test
-    public void testSendingMessageToEmailAddress() throws Exception {
+    public void testSendingMessageInAnotherZoneResets() throws Exception {
+        IdentityZone zone = MultitenancyFixture.identityZone("zone", "zone");
+        IdentityZoneHolder.set(zone);
 
         mockNotificationsServer.expect(requestTo("http://notifications.example.com/emails"))
             .andExpect(method(POST))
@@ -93,8 +108,30 @@ public class NotificationsServiceTest {
             .andExpect(jsonPath("$.html").value("<p>Message</p>"))
             .andRespond(withSuccess());
 
-        notificationsService.sendMessage(null, "user@example.com", MessageType.PASSWORD_RESET, "First message", "<p>Message</p>");
+        notificationsService.sendMessage("user@example.com", MessageType.PASSWORD_RESET, "First message", "<p>Message</p>");
 
         mockNotificationsServer.verify();
+        assertSame(zone, IdentityZoneHolder.get());
+    }
+
+    @Test
+    public void testSendingMessageInAnotherZoneResetsWhenError() throws Exception {
+        IdentityZone zone = MultitenancyFixture.identityZone("zone", "zone");
+        IdentityZoneHolder.set(zone);
+
+        mockNotificationsServer.expect(requestTo("http://notifications.example.com/emails"))
+            .andExpect(method(POST))
+            .andExpect(jsonPath("$.to").value("user@example.com"))
+            .andExpect(jsonPath("$.subject").value("First message"))
+            .andExpect(jsonPath("$.html").value("<p>Message</p>"))
+            .andRespond(withBadRequest());
+        try {
+            notificationsService.sendMessage("user@example.com", MessageType.PASSWORD_RESET, "First message", "<p>Message</p>");
+            fail();
+        } catch (HttpClientErrorException x) {
+        }
+
+        mockNotificationsServer.verify();
+        assertSame(zone, IdentityZoneHolder.get());
     }
 }

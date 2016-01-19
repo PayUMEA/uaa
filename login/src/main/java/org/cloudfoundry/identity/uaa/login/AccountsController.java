@@ -15,6 +15,7 @@ package org.cloudfoundry.identity.uaa.login;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
 import org.cloudfoundry.identity.uaa.error.UaaException;
+import org.cloudfoundry.identity.uaa.scim.exception.InvalidPasswordException;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.hibernate.validator.constraints.Email;
@@ -49,28 +50,33 @@ public class AccountsController {
 
     @RequestMapping(value = "/create_account", method = GET)
     public String activationEmail(Model model,
-                                    @RequestParam(value = "client_id", required = false) String clientId) {
+                                  @RequestParam(value = "client_id", required = false) String clientId,
+                                  @RequestParam(value = "redirect_uri", required = false) String redirectUri) {
         model.addAttribute("client_id", clientId);
+        model.addAttribute("redirect_uri", redirectUri);
         return "accounts/new_activation_email";
     }
 
     @RequestMapping(value = "/create_account.do", method = POST)
     public String sendActivationEmail(Model model, HttpServletResponse response,
                                       @RequestParam(value = "client_id", required = false) String clientId,
+                                      @RequestParam(value = "redirect_uri", required = false) String redirectUri,
                                       @Valid @ModelAttribute("email") ValidEmail email, BindingResult result,
                                       @RequestParam("password") String password,
                                       @RequestParam("password_confirmation") String passwordConfirmation) {
         if(result.hasErrors()) {
-            return handleUnprocessableEntity(model, response, "invalid_email");
+            return handleUnprocessableEntity(model, response, "error_message_code", "invalid_email");
         }
-        ChangePasswordValidation validation = new ChangePasswordValidation(password, passwordConfirmation);
+        PasswordConfirmationValidation validation = new PasswordConfirmationValidation(password, passwordConfirmation);
         if (!validation.valid()) {
-            return handleUnprocessableEntity(model, response, validation.getMessageCode());
+            return handleUnprocessableEntity(model, response, "error_message_code", validation.getMessageCode());
         }
         try {
-            accountCreationService.beginActivation(email.getEmail(), password, clientId);
+            accountCreationService.beginActivation(email.getEmail(), password, clientId, redirectUri);
         } catch (UaaException e) {
-            return handleUnprocessableEntity(model, response, "username_exists");
+            return handleUnprocessableEntity(model, response, "error_message_code", "username_exists");
+        } catch (InvalidPasswordException e) {
+            return handleUnprocessableEntity(model, response, "error_message", e.getMessagesAsOneString());
         }
         return "redirect:accounts/email_sent";
     }
@@ -105,8 +111,8 @@ public class AccountsController {
         return "redirect:" + redirectLocation;
     }
 
-    private String handleUnprocessableEntity(Model model, HttpServletResponse response, String errorMessage) {
-        model.addAttribute("error_message_code", errorMessage);
+    private String handleUnprocessableEntity(Model model, HttpServletResponse response, String attributeKey, String attributeValue) {
+        model.addAttribute(attributeKey, attributeValue);
         response.setStatus(HttpStatus.UNPROCESSABLE_ENTITY.value());
         return "accounts/new_activation_email";
     }

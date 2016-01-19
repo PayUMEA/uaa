@@ -12,10 +12,14 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.util;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.util.StringUtils;
+
 import java.io.IOException;
 
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.type.TypeReference;
 
 public class JsonUtils {
     private static ObjectMapper objectMapper = new ObjectMapper();
@@ -38,7 +42,23 @@ public class JsonUtils {
 
     public static <T> T readValue(String s, Class<T> clazz) throws JsonUtilException {
         try {
-            return objectMapper.readValue(s, clazz);
+            if (StringUtils.hasText(s)) {
+                return objectMapper.readValue(s, clazz);
+            } else {
+                return null;
+            }
+        } catch (IOException e) {
+            throw new JsonUtilException(e);
+        }
+    }
+
+    public static <T> T readValue(byte[] data, Class<T> clazz) throws JsonUtilException {
+        try {
+            if (data!=null && data.length>0) {
+                return objectMapper.readValue(data, clazz);
+            } else {
+                return null;
+            }
         } catch (IOException e) {
             throw new JsonUtilException(e);
         }
@@ -46,7 +66,23 @@ public class JsonUtils {
 
     public static <T> T readValue(String s, TypeReference typeReference) {
         try {
-            return objectMapper.readValue(s, typeReference);
+            if (StringUtils.hasText(s)) {
+                return objectMapper.readValue(s, typeReference);
+            } else {
+                return null;
+            }
+        } catch (IOException e) {
+            throw new JsonUtilException(e);
+        }
+    }
+
+    public static <T> T readValue(byte[] data, TypeReference typeReference) {
+        try {
+            if (data!=null && data.length>0) {
+                return objectMapper.readValue(data, typeReference);
+            } else {
+                return null;
+            }
         } catch (IOException e) {
             throw new JsonUtilException(e);
         }
@@ -54,8 +90,26 @@ public class JsonUtils {
 
     public static <T> T convertValue(Object object, Class<T> toClazz) throws JsonUtilException {
         try {
-            return objectMapper.convertValue(object, toClazz);
+            if (object == null) {
+                return null;
+            } else {
+                return objectMapper.convertValue(object, toClazz);
+            }
         } catch (IllegalArgumentException e) {
+            throw new JsonUtilException(e);
+        }
+    }
+
+    public static JsonNode readTree(String s) {
+        try {
+            if (StringUtils.hasText(s)) {
+                return objectMapper.readTree(s);
+            } else {
+                return null;
+            }
+        } catch (JsonProcessingException e) {
+            throw new JsonUtilException(e);
+        } catch (IOException e) {
             throw new JsonUtilException(e);
         }
     }

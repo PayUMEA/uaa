@@ -19,7 +19,7 @@
        xmlns:mvc="http://www.springframework.org/schema/mvc"
        xmlns:context="http://www.springframework.org/schema/context"
        xsi:schemaLocation="http://www.springframework.org/schema/security/oauth2 http://www.springframework.org/schema/security/spring-security-oauth2-2.0.xsd
-        http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security-3.2.xsd
+        http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security-4.0.xsd
         http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
         http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
         http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util-4.0.xsd">
@@ -37,20 +37,19 @@
     <import resource="classpath:spring/env.xml" />
     <import resource="spring/audit.xml" />
 
-    <sec:http pattern="/resources/**" security="none" />
-    <sec:http pattern="/favicon.ico" security="none" />
-    <sec:http pattern="/info" security="none" />
-    <sec:http pattern="/password/**" security="none" />
-    <sec:http pattern="/healthz/**" security="none" name="healthz"/>
-    <sec:http pattern="/saml/web/**" security="none" />
-    <sec:http pattern="/vendor/**" security="none" />
+    <sec:http name="secFilterOpen01" pattern="/resources/**" security="none" />
+    <sec:http name="secFilterOpen02" pattern="/favicon.ico" security="none" />
+    <sec:http name="secFilterOpen03" pattern="/info" security="none" />
+    <sec:http name="secFilterOpen04" pattern="/password/**" security="none" />
+    <sec:http name="secFilterOpen05Healthz" pattern="/healthz/**" security="none" />
+    <sec:http name="secFilterOpen06" pattern="/saml/web/**" security="none" />
+    <sec:http name="secFilterOpen07" pattern="/vendor/**" security="none" />
     <!--<sec:http pattern="/login" security="none" />-->
-    <sec:http pattern="/error" security="none" />
-    <sec:http pattern="/forgot_password*" security="none" />
-    <sec:http pattern="/reset_password" security="none" />
-    <sec:http pattern="/email_sent" security="none" />
-    <sec:http pattern="/create_account*" security="none" />
-    <sec:http pattern="/accounts/email_sent" security="none" />
+    <sec:http name="secFilterOpen08" pattern="/error" security="none" />
+    <sec:http name="secFilterOpen11" pattern="/email_sent" security="none" />
+    <sec:http name="secFilterOpen12" pattern="/create_account*" security="none" />
+    <sec:http name="secFilterOpen13" pattern="/accounts/email_sent" security="none" />
+    <sec:http name="secFilterCsrfLandingPage14" pattern="/invalid_request" security="none" />
 
     <bean id="xFrameOptionsFilter" class="org.cloudfoundry.identity.uaa.login.XFrameOptionsFilter" />
     <bean id="oauth2TokenParseFilter" class="java.lang.Class" factory-method="forName">
@@ -68,7 +67,7 @@
         </property>
         <property name="ignore">
             <list>
-                <value>healthz</value>
+                <value>secFilterOpen05Healthz</value>
             </list>
         </property>
         <property name="errorMap">
@@ -91,20 +90,42 @@
                 <!-- Zone switcher goes *after* class OAuth2AuthenticationProcessingFilter as it requires a token to be present to work -->
                 <entry value-ref="identityZoneSwitchingFilter"
                        key="#{T(org.cloudfoundry.identity.uaa.security.web.SecurityFilterChainPostProcessor.FilterPosition).after(@oauth2TokenParseFilter)}"/>
+                <entry value-ref="userManagementSecurityFilter"
+                       key="#{T(org.cloudfoundry.identity.uaa.security.web.SecurityFilterChainPostProcessor.FilterPosition).after(T(org.cloudfoundry.identity.uaa.zone.IdentityZoneSwitchingFilter))}"/>
+                <entry value-ref="userManagementFilter"
+                       key="#{T(org.cloudfoundry.identity.uaa.security.web.SecurityFilterChainPostProcessor.FilterPosition).after(T(org.cloudfoundry.identity.uaa.zone.AllowUserManagementSecurityFilter))}"/>
                 <entry value-ref="xFrameOptionsFilter" key="#{T(org.cloudfoundry.identity.uaa.security.web.SecurityFilterChainPostProcessor.FilterPosition).position(101)}"/>
+                <entry value-ref="sessionResetFilter" key="#{T(org.cloudfoundry.identity.uaa.security.web.SecurityFilterChainPostProcessor.FilterPosition).position(102)}"/>
         	</map>
         </property>
     </bean>
 
+    <bean id="userManagementSecurityFilter" class="org.cloudfoundry.identity.uaa.zone.AllowUserManagementSecurityFilter">
+        <constructor-arg ref="identityProviderProvisioning"/>
+    </bean>
+
+    <bean id="userManagementFilter" class="org.cloudfoundry.identity.uaa.zone.AllowInternalUserManagementFilter">
+        <constructor-arg ref="identityProviderProvisioning"/>
+    </bean>
+
     <bean id="identityZoneResolvingFilter" class="org.cloudfoundry.identity.uaa.zone.IdentityZoneResolvingFilter">
         <property name="identityZoneProvisioning" ref="identityZoneProvisioning"/>
-        <property name="internalHostnames">
+        <property name="defaultInternalHostnames">
            <set>
                 <value>#{T(org.cloudfoundry.identity.uaa.util.UaaUrlUtils).getHostForURI(@uaaUrl)}</value>
                 <value>#{T(org.cloudfoundry.identity.uaa.util.UaaUrlUtils).getHostForURI(@loginUrl)}</value>
                 <value>localhost</value>
            </set>
         </property>
+        <property name="additionalInternalHostnames" value="#{@config['zones']==null ? null : @config['zones']['internal']==null ? null : @config['zones']['internal']['hostnames']}"/>
+    </bean>
+
+    <bean id="sessionResetFilter" class="org.cloudfoundry.identity.uaa.authentication.SessionResetFilter">
+        <constructor-arg>
+            <bean class="org.springframework.security.web.DefaultRedirectStrategy"/>
+        </constructor-arg>
+        <constructor-arg value="/login"/>
+        <constructor-arg ref="userDatabase"/>
     </bean>
 
     <bean id="identityZoneSwitchingFilter" class="org.cloudfoundry.identity.uaa.zone.IdentityZoneSwitchingFilter"/>
@@ -116,6 +137,22 @@
     <bean id="loginUrl" class="java.lang.String">
         <constructor-arg value="${login.url:http://localhost:8080/uaa}"/>
     </bean>
+
+    <bean id="scimUserQueryConverter" class="org.cloudfoundry.identity.uaa.scim.jdbc.ScimSearchQueryConverter">
+        <property name="attributeNameMapper">
+            <bean class="org.cloudfoundry.identity.uaa.rest.SimpleAttributeNameMapper">
+                <constructor-arg name="paramsMap">
+                    <map key-type="java.lang.String" value-type="java.lang.String">
+                        <entry key="emails\.value" value="email" />
+                        <entry key="groups\.display" value="authorities" />
+                        <entry key="phoneNumbers\.value" value="phoneNumber" />
+                    </map>
+                </constructor-arg>
+            </bean>
+        </property>
+        <property name="dbCaseInsensitive" value="#{ (@platform eq 'mysql' and '${database.caseinsensitive:true}') ? true : '${database.caseinsensitive:false}'}"/>
+    </bean>
+
 
     <import resource="spring/oauth-clients.xml" />
     <!-- The order of these imports is important because of Spring Security filter chain rules -->
@@ -149,7 +186,7 @@
         <property name="exceptionTranslator" ref="accountNotVerifiedExceptionTranslator" />
     </bean>
 
-    <bean id="accountNotVerifiedExceptionTranslator" class="org.cloudfoundry.identity.uaa.authentication.AccountNotVerifiedExceptionTranslator"/>
+    <bean id="accountNotVerifiedExceptionTranslator" class="org.cloudfoundry.identity.uaa.authentication.UaaExceptionTranslator"/>
 
     <bean id="accessDecisionManager" class="org.springframework.security.access.vote.UnanimousBased">
         <constructor-arg>
@@ -180,28 +217,6 @@
 
     <bean id="http403EntryPoint" class="org.springframework.security.web.authentication.Http403ForbiddenEntryPoint" />
 
-    <bean id="uiRequestMatcher" class="org.cloudfoundry.identity.uaa.security.web.DelegatingRequestMatcher">
-        <constructor-arg>
-            <list>
-                <bean class="org.springframework.security.web.util.AntPathRequestMatcher">
-                    <constructor-arg value="/" />
-                </bean>
-                <bean class="org.springframework.security.web.util.AntPathRequestMatcher">
-                    <constructor-arg value="/spring_security_login" />
-                </bean>
-                <bean class="org.springframework.security.web.util.AntPathRequestMatcher">
-                    <constructor-arg value="/oauth/**" />
-                </bean>
-                <bean class="org.springframework.security.web.util.AntPathRequestMatcher">
-                    <constructor-arg value="/login**" />
-                </bean>
-                <bean class="org.springframework.security.web.util.AntPathRequestMatcher">
-                    <constructor-arg value="/logout.do*" />
-                </bean>
-            </list>
-        </constructor-arg>
-    </bean>
-
     <bean id="bcryptPasswordEncoder" class="org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder" />
 
     <bean id="cachingPasswordEncoder" class="org.cloudfoundry.identity.uaa.util.CachingPasswordEncoder">
@@ -211,17 +226,33 @@
         <property name="enabled" value="${oauth.client.encoder_cache:true}"/>
     </bean>
 
-    <!--<oauth:web-expression-handler id="oauthWebExpressionHandler" />-->
     <bean id="uaaIdentityZone" class="org.cloudfoundry.identity.uaa.zone.IdentityZone" factory-method="getUaa"/>
+
     <bean id="oauthWebExpressionHandler"
       class="org.cloudfoundry.identity.uaa.oauth.expression.ContextSensitiveOAuth2WebSecurityExpressionHandler">
         <property name="identityZone" ref="uaaIdentityZone"/>
     </bean>
-    <!--<mvc:resources location="/" mapping="/**" />-->
-
-    <mvc:annotation-driven />
 
     <mvc:default-servlet-handler />
+
+    <util:list id="prompts">
+        <bean class="org.cloudfoundry.identity.uaa.authentication.login.Prompt">
+            <constructor-arg name="name" value="username" />
+            <constructor-arg name="text" value="${login.prompt.username.text:Email}" />
+            <constructor-arg name="type" value="text" />
+        </bean>
+        <bean class="org.cloudfoundry.identity.uaa.authentication.login.Prompt">
+            <constructor-arg name="name" value="password" />
+            <constructor-arg name="text" value="${login.prompt.password.text:Password}" />
+            <constructor-arg name="type" value="password" />
+        </bean>
+        <bean class="org.cloudfoundry.identity.uaa.authentication.login.Prompt">
+            <constructor-arg name="name" value="passcode" />
+            <constructor-arg name="text"
+                             value="One Time Code ( Get one at ${login.url:http://localhost:8080/uaa}/passcode )" />
+            <constructor-arg name="type" value="password" />
+        </bean>
+    </util:list>
 
     <!--Basic application beans. -->
     <bean id="loginInfoEndpoint" class="org.cloudfoundry.identity.uaa.authentication.login.LoginInfoEndpoint">
@@ -231,26 +262,7 @@
         <property name="entityID" ref="samlEntityID"/>
         <property name="idpDefinitions" ref="metaDataProviders"/>
         <property name="clientDetailsService" ref="jdbcClientDetailsService"/>
-        <property name="prompts">
-            <util:list>
-                <bean class="org.cloudfoundry.identity.uaa.authentication.login.Prompt">
-                    <constructor-arg name="name" value="username" />
-                    <constructor-arg name="text" value="Email" />
-                    <constructor-arg name="type" value="text" />
-                </bean>
-                <bean class="org.cloudfoundry.identity.uaa.authentication.login.Prompt">
-                    <constructor-arg name="name" value="password" />
-                    <constructor-arg name="text" value="Password" />
-                    <constructor-arg name="type" value="password" />
-                </bean>
-                <bean class="org.cloudfoundry.identity.uaa.authentication.login.Prompt">
-                    <constructor-arg name="name" value="passcode" />
-                    <constructor-arg name="text"
-                                     value="One Time Code (Get one at ${uaa.url:http://localhost:8080/uaa}/passcode)" />
-                    <constructor-arg name="type" value="password" />
-                </bean>
-            </util:list>
-        </property>
+        <property name="prompts" ref="prompts"/>
         <property name="environment" ref="environment"/>
         <property name="expiringCodeStore" ref="codeStore"/>
     </bean>
@@ -263,6 +275,8 @@
     <bean id="idpBootstrap" class="org.cloudfoundry.identity.uaa.config.IdentityProviderBootstrap">
         <constructor-arg ref="identityProviderProvisioning"/>
         <constructor-arg ref="environment"/>
+        <property name="defaultPasswordPolicy" ref="defaultUaaPasswordPolicy"/>
+        <property name="defaultLockoutPolicy" ref="lockoutPolicy"/>
         <property name="ldapConfig" value="#{@config['ldap']}"/>
         <property name="keystoneConfig" value="#{@config['keystone']}"/>
         <property name="samlProviders" ref="metaDataProviders"/>

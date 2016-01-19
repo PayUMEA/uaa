@@ -100,7 +100,7 @@ public class ClientAdminEndpoints implements InitializingBean {
 
     private SecurityContextAccessor securityContextAccessor = new DefaultSecurityContextAccessor();
 
-    private final Map<String, AtomicInteger> errorCounts = new ConcurrentHashMap<String, AtomicInteger>();
+    private final Map<String, AtomicInteger> errorCounts = new ConcurrentHashMap<>();
 
     private AtomicInteger clientUpdates = new AtomicInteger();
 
@@ -110,9 +110,19 @@ public class ClientAdminEndpoints implements InitializingBean {
 
     private ClientDetailsValidator clientDetailsValidator;
 
+    private ClientDetailsValidator restrictedScopesValidator;
+
     private ApprovalStore approvalStore;
 
     private AuthenticationManager authenticationManager;
+
+    public ClientDetailsValidator getRestrictedScopesValidator() {
+        return restrictedScopesValidator;
+    }
+
+    public void setRestrictedScopesValidator(ClientDetailsValidator restrictedScopesValidator) {
+        this.restrictedScopesValidator = restrictedScopesValidator;
+    }
 
     public ApprovalStore getApprovalStore() {
         return approvalStore;
@@ -204,14 +214,34 @@ public class ClientAdminEndpoints implements InitializingBean {
     public ClientDetails createClientDetails(@RequestBody BaseClientDetails client) throws Exception {
         ClientDetails details = clientDetailsValidator.validate(client, Mode.CREATE);
         clientRegistrationService.addClientDetails(details);
-        return removeSecret(client);
+        return removeSecret(clientDetailsService.retrieve(client.getClientId()));
+    }
+
+    @RequestMapping(value = "/oauth/clients/restricted", method = RequestMethod.GET)
+    @ResponseStatus(HttpStatus.OK)
+    @ResponseBody
+    public List<String> getRestrictedClientScopes() throws Exception {
+        if (restrictedScopesValidator instanceof RestrictUaaScopesClientValidator) {
+            return ((RestrictUaaScopesClientValidator)restrictedScopesValidator).getUaaScopes().getUaaScopes();
+        } else {
+            return null;
+        }
+    }
+
+
+    @RequestMapping(value = "/oauth/clients/restricted", method = RequestMethod.POST)
+    @ResponseStatus(HttpStatus.CREATED)
+    @ResponseBody
+    public ClientDetails createRestrictedClientDetails(@RequestBody BaseClientDetails client) throws Exception {
+        getRestrictedScopesValidator().validate(client, Mode.CREATE);
+        return createClientDetails(client);
     }
 
     @RequestMapping(value = "/oauth/clients/tx", method = RequestMethod.POST)
     @ResponseStatus(HttpStatus.CREATED)
     @ResponseBody
     @Transactional
-    public ClientDetails[] createClientDetailsTx(@RequestBody BaseClientDetails[] clients) throws Exception {
+    public ClientDetails[] createClientDetailsTx(@RequestBody ClientDetailsModification[] clients) throws Exception {
         if (clients==null || clients.length==0) {
             throw new NoSuchClientException("Message body does not contain any clients.");
         }
@@ -234,7 +264,7 @@ public class ClientAdminEndpoints implements InitializingBean {
     @ResponseStatus(HttpStatus.OK)
     @Transactional
     @ResponseBody
-    public ClientDetails[] updateClientDetailsTx(@RequestBody BaseClientDetails[] clients) throws Exception {
+    public ClientDetails[] updateClientDetailsTx(@RequestBody ClientDetailsModification[] clients) throws Exception {
         if (clients==null || clients.length==0) {
             throw new InvalidClientDetailsException("No clients specified for update.");
         }
@@ -263,7 +293,14 @@ public class ClientAdminEndpoints implements InitializingBean {
 
     }
 
-
+    @RequestMapping(value = "/oauth/clients/restricted/{client}", method = RequestMethod.PUT)
+    @ResponseStatus(HttpStatus.OK)
+    @ResponseBody
+    public ClientDetails updateRestrictedClientDetails(@RequestBody BaseClientDetails client,
+                                                       @PathVariable("client") String clientId) throws Exception {
+        getRestrictedScopesValidator().validate(client, Mode.MODIFY);
+        return updateClientDetails(client, clientId);
+    }
 
     @RequestMapping(value = "/oauth/clients/{client}", method = RequestMethod.PUT)
     @ResponseStatus(HttpStatus.OK)
@@ -287,7 +324,7 @@ public class ClientAdminEndpoints implements InitializingBean {
         details = clientDetailsValidator.validate(details, Mode.MODIFY);
         clientRegistrationService.updateClientDetails(details);
         clientUpdates.incrementAndGet();
-        return removeSecret(client);
+        return removeSecret(clientDetailsService.retrieve(clientId));
     }
 
     @RequestMapping(value = "/oauth/clients/{client}", method = RequestMethod.DELETE)
@@ -295,7 +332,7 @@ public class ClientAdminEndpoints implements InitializingBean {
     @ResponseBody
     public ClientDetails removeClientDetails(@PathVariable String client) throws Exception {
         ClientDetails details = clientDetailsService.retrieve(client);
-        doProcessDeletes(new ClientDetails[] {details});
+        doProcessDeletes(new ClientDetails[]{details});
         return removeSecret(details);
     }
 
@@ -303,7 +340,7 @@ public class ClientAdminEndpoints implements InitializingBean {
     @ResponseStatus(HttpStatus.OK)
     @Transactional
     @ResponseBody
-    public ClientDetails[] removeClientDetailsTx(@RequestBody BaseClientDetails[] details) throws Exception {
+    public ClientDetails[] removeClientDetailsTx(@RequestBody ClientDetailsModification[] details) throws Exception {
         ClientDetails[] result = new ClientDetails[details.length];
         for (int i=0; i<result.length; i++) {
             result[i] = clientDetailsService.retrieve(details[i].getClientId());
@@ -483,7 +520,7 @@ public class ClientAdminEndpoints implements InitializingBean {
     @ExceptionHandler(InvalidClientDetailsException.class)
     public ResponseEntity<InvalidClientDetailsException> handleInvalidClientDetails(InvalidClientDetailsException e) {
         incrementErrorCounts(e);
-        return new ResponseEntity<InvalidClientDetailsException>(e, HttpStatus.BAD_REQUEST);
+        return new ResponseEntity<>(e, HttpStatus.BAD_REQUEST);
     }
 
     @ExceptionHandler(NoSuchClientException.class)
@@ -495,7 +532,7 @@ public class ClientAdminEndpoints implements InitializingBean {
     @ExceptionHandler(ClientAlreadyExistsException.class)
     public ResponseEntity<InvalidClientDetailsException> handleClientAlreadyExists(ClientAlreadyExistsException e) {
         incrementErrorCounts(e);
-        return new ResponseEntity<InvalidClientDetailsException>(new InvalidClientDetailsException(e.getMessage()),
+        return new ResponseEntity<>(new InvalidClientDetailsException(e.getMessage()),
                         HttpStatus.CONFLICT);
     }
 

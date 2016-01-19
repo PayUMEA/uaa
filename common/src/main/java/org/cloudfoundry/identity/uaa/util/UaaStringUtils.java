@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -13,11 +13,18 @@
 
 package org.cloudfoundry.identity.uaa.util;
 
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.util.StringUtils;
+
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -25,7 +32,7 @@ import java.util.regex.Pattern;
 
 /**
  * @author Dave Syer
- * 
+ *
  */
 public class UaaStringUtils {
 
@@ -33,7 +40,7 @@ public class UaaStringUtils {
      * Convert a string from camel case to underscores, also replacing periods
      * with underscores (so for example a fully
      * qualified Java class name gets underscores everywhere).
-     * 
+     *
      * @param value a camel case String
      * @return the same value with camels comverted to underscores
      */
@@ -56,7 +63,7 @@ public class UaaStringUtils {
 
     /**
      * Hide the passwords and secrets in a config map (e.g. for logging).
-     * 
+     *
      * @param map a map with String keys (e.g. Properties) and String or nested
      *            map values
      * @return new properties with no plaintext passwords and secrets
@@ -80,7 +87,7 @@ public class UaaStringUtils {
     }
 
     /**
-     * @param properties
+     * @param properties the properties with potential password values
      * @return new properties with no plaintext passwords
      */
     public static Properties hidePasswords(Properties properties) {
@@ -93,6 +100,13 @@ public class UaaStringUtils {
         }
         return result;
     }
+
+    public static boolean containsWildcard(String s) {
+        if (StringUtils.hasText(s)) {
+            return !escapeRegExCharacters(s).equals(constructSimpleWildcardPattern(s));
+        }
+        return false;
+     }
 
     /**
      * Escapes all regular expression patterns in a string so that when
@@ -122,7 +136,7 @@ public class UaaStringUtils {
      * Returns a pattern that does a single level regular expression match where
      * the * character is a wildcard until it encounters the next literal
      * @param s
-     * @return
+     * @return the wildcard pattern
      */
     public static String constructSimpleWildcardPattern(String s) {
         String result = escapeRegExCharacters(s);
@@ -130,10 +144,10 @@ public class UaaStringUtils {
         //so what we do is replace \* in our escaped string
         //with [^\\.]+
         //reference http://www.regular-expressions.info/dot.html
-        return result.replace("\\*","[^\\\\.]+");
+        return result.replace("\\*", "[^\\\\.]+");
     }
 
-    public static Set<Pattern> constructWildcards(Set<String> wildcardStrings) {
+    public static Set<Pattern> constructWildcards(Collection<String> wildcardStrings) {
         Set<Pattern> wildcards = new HashSet<>();
         for (String wildcard : wildcardStrings) {
             String pattern = UaaStringUtils.constructSimpleWildcardPattern(wildcard);
@@ -154,7 +168,7 @@ public class UaaStringUtils {
     /**
      * Extract a Map from some properties by removing a prefix from the key
      * names.
-     * 
+     *
      * @param properties the properties to use
      * @param prefix the prefix to strip from key names
      * @return a map of String values
@@ -182,6 +196,26 @@ public class UaaStringUtils {
 
     private static boolean isPassword(String key) {
         return key.endsWith("password") || key.endsWith("secret") || key.endsWith("signing-key");
+    }
+
+    public static Set<String> getStringsFromAuthorities(Collection<? extends GrantedAuthority> authorities) {
+        Set<String> result = new HashSet<>();
+        if (authorities!=null) {
+            for (GrantedAuthority authority : authorities) {
+                result.add(authority.getAuthority());
+            }
+        }
+        return result;
+    }
+
+    public static List<? extends GrantedAuthority> getAuthoritiesFromStrings(Collection<String> authorities) {
+        List<GrantedAuthority> result = new LinkedList<>();
+        if (authorities!=null) {
+            for (String s : authorities) {
+                result.add(new SimpleGrantedAuthority(s));
+            }
+        }
+        return result;
     }
 
 }

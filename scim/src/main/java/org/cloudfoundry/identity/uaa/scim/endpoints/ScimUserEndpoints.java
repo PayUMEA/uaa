@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -12,22 +12,8 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.endpoints;
 
-import java.security.SecureRandom;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.cloudfoundry.identity.uaa.error.ConvertingExceptionView;
 import org.cloudfoundry.identity.uaa.error.ExceptionReport;
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval;
@@ -44,8 +30,10 @@ import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.ScimUserProvisioning;
 import org.cloudfoundry.identity.uaa.scim.exception.ScimException;
 import org.cloudfoundry.identity.uaa.scim.exception.ScimResourceConflictException;
+import org.cloudfoundry.identity.uaa.scim.validate.PasswordValidator;
 import org.cloudfoundry.identity.uaa.util.UaaPagingUtils;
 import org.cloudfoundry.identity.uaa.util.UaaStringUtils;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.expression.spel.SpelEvaluationException;
@@ -72,27 +60,45 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.View;
 
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * User provisioning and query endpoints. Implements the core API from the
  * Simple Cloud Identity Management (SCIM)
  * group. Exposes basic CRUD and query features for user accounts in a backend
  * database.
- * 
+ *
  * @author Luke Taylor
  * @author Dave Syer
- * 
+ *
  * @see <a href="http://www.simplecloud.info">SCIM specs</a>
  */
 @Controller
 @ManagedResource
 public class ScimUserEndpoints implements InitializingBean {
     private static final String USER_APPROVALS_FILTER_TEMPLATE = "user_id eq \"%s\"";
+
+    private static Log logger = LogFactory.getLog(ScimUserEndpoints.class);
+
     public static final String E_TAG = "ETag";
 
     private ScimUserProvisioning dao;
-    
+
     private ResourceMonitor<ScimUser> scimUserResourceMonitor;
-    
+
     private ScimGroupMembershipManager membershipManager;
 
     private ApprovalStore approvalStore;
@@ -110,6 +116,8 @@ public class ScimUserEndpoints implements InitializingBean {
     private HttpMessageConverter<?>[] messageConverters = new RestTemplate().getMessageConverters().toArray(
                     new HttpMessageConverter<?>[0]);
 
+    private PasswordValidator passwordValidator;
+
     /**
      * Set the message body converters to use.
      * <p>
@@ -122,7 +130,7 @@ public class ScimUserEndpoints implements InitializingBean {
 
     /**
      * Map from exception type to Http status.
-     * 
+     *
      * @param statuses the statuses to set
      */
     public void setStatuses(Map<Class<? extends Exception>, HttpStatus> statuses) {
@@ -167,7 +175,13 @@ public class ScimUserEndpoints implements InitializingBean {
     @ResponseStatus(HttpStatus.CREATED)
     @ResponseBody
     public ScimUser createUser(@RequestBody ScimUser user, HttpServletResponse httpServletResponse) {
-        ScimUser scimUser = dao.createUser(user, user.getPassword() == null ? generatePassword() : user.getPassword());
+        if (user.getPassword() == null) {
+            user.setPassword(generatePassword());
+        } else {
+            passwordValidator.validate(user.getPassword());
+        }
+
+        ScimUser scimUser = dao.createUser(user, user.getPassword());
         if (user.getApprovals()!=null) {
             for (Approval approval : user.getApprovals()) {
                 approval.setUserId(scimUser.getId());
@@ -207,8 +221,8 @@ public class ScimUserEndpoints implements InitializingBean {
                     HttpServletResponse httpServletResponse) {
         int version = etag == null ? -1 : getVersion(userId, etag);
         ScimUser user = getUser(userId, httpServletResponse);
-        dao.delete(userId, version);
         membershipManager.removeMembersByMemberId(userId);
+        dao.delete(userId, version);
         scimDeletes.incrementAndGet();
         return user;
     }
@@ -249,7 +263,7 @@ public class ScimUserEndpoints implements InitializingBean {
     public SearchResults<?> findUsers(
                     @RequestParam(value = "attributes", required = false) String attributesCommaSeparated,
                     @RequestParam(required = false, defaultValue = "id pr") String filter,
-                    @RequestParam(required = false) String sortBy,
+                    @RequestParam(required = false, defaultValue = "created") String sortBy,
                     @RequestParam(required = false, defaultValue = "ascending") String sortOrder,
                     @RequestParam(required = false, defaultValue = "1") int startIndex,
                     @RequestParam(required = false, defaultValue = "100") int count) {
@@ -299,7 +313,7 @@ public class ScimUserEndpoints implements InitializingBean {
         }
 
         Set<ScimGroup> directGroups = membershipManager.getGroupsWithMember(user.getId(), false);
-        Set<ScimGroup> indirectGroups = membershipManager.getGroupsWithMember(user.getId(), true);
+        Set<ScimGroup> indirectGroups = membershipManager.getGroupsWithMember(user.getId(),true);
         indirectGroups.removeAll(directGroups);
         Set<ScimUser.Group> groups = new HashSet<ScimUser.Group>();
         for (ScimGroup group : directGroups) {
@@ -331,6 +345,7 @@ public class ScimUserEndpoints implements InitializingBean {
 
     @ExceptionHandler
     public View handleException(Exception t, HttpServletRequest request) throws ScimException {
+        logger.error("Unhandled exception in SCIM user endpoints.",t);
         ScimException e = new ScimException("Unexpected error", t, HttpStatus.INTERNAL_SERVER_ERROR);
         if (t instanceof ScimException) {
             e = (ScimException) t;
@@ -391,5 +406,9 @@ public class ScimUserEndpoints implements InitializingBean {
 
     public void setScimUserResourceMonitor(ResourceMonitor<ScimUser> scimUserResourceMonitor) {
         this.scimUserResourceMonitor = scimUserResourceMonitor;
+    }
+
+    public void setPasswordValidator(PasswordValidator passwordValidator) {
+        this.passwordValidator = passwordValidator;
     }
 }

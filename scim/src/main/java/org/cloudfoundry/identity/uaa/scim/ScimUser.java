@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -14,32 +14,35 @@ package org.cloudfoundry.identity.uaa.scim;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval;
-import org.codehaus.jackson.annotate.JsonIgnore;
-import org.codehaus.jackson.annotate.JsonProperty;
-import org.codehaus.jackson.map.annotate.JsonDeserialize;
-import org.codehaus.jackson.map.annotate.JsonSerialize;
+import org.cloudfoundry.identity.uaa.util.json.JsonDateSerializer;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 /**
  * Object to hold SCIM data for Jackson to map to and from JSON
- * 
+ *
  * See the <a
  * href="http://www.simplecloud.info/specs/draft-scim-core-schema-02.html">SCIM
  * user schema</a>.
- * 
+ *
  * @author Luke Taylor
  */
-@JsonSerialize(include = JsonSerialize.Inclusion.NON_NULL)
+@JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonDeserialize(using = ScimUserJsonDeserializer.class)
 public final class ScimUser extends ScimCore {
 
-    @JsonSerialize(include = JsonSerialize.Inclusion.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class Group {
         String value;
 
@@ -129,7 +132,7 @@ public final class ScimUser extends ScimCore {
         }
     }
 
-    @JsonSerialize(include = JsonSerialize.Inclusion.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class Name {
         String formatted;
 
@@ -202,7 +205,7 @@ public final class ScimUser extends ScimCore {
 
     }
 
-    @JsonSerialize(include = JsonSerialize.Inclusion.NON_DEFAULT)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class Email {
         private String value;
 
@@ -258,7 +261,7 @@ public final class ScimUser extends ScimCore {
         }
     }
 
-    @JsonSerialize(include = JsonSerialize.Inclusion.NON_DEFAULT)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class PhoneNumber {
         private String value;
 
@@ -320,6 +323,10 @@ public final class ScimUser extends ScimCore {
     private String externalId = "";
 
     private String zoneId = null;
+
+    private String salt = null;
+
+    private Date passwordLastModified = null;
 
     @JsonProperty
     private String password;
@@ -504,6 +511,28 @@ public final class ScimUser extends ScimCore {
         this.zoneId = zoneId;
     }
 
+    public String getSalt() {
+        return salt;
+    }
+
+    public void setSalt(String salt) {
+        this.salt = salt;
+    }
+
+    @JsonSerialize(using = JsonDateSerializer.class, include = JsonSerialize.Inclusion.NON_NULL)
+    public Date getPasswordLastModified() {
+        if (passwordLastModified!=null) {
+            return passwordLastModified;
+        } else if (getId()!=null) {
+            return getMeta().getCreated();
+        }
+        return null;
+    }
+
+    public void setPasswordLastModified(Date passwordLastModified) {
+        this.passwordLastModified = passwordLastModified;
+    }
+
     @JsonIgnore
     public String getPrimaryEmail() {
         if (getEmails() == null || getEmails().isEmpty()) {
@@ -584,7 +613,7 @@ public final class ScimUser extends ScimCore {
 
     /**
      * Adds a new phone number with null type.
-     * 
+     *
      * @param newPhoneNumber
      */
     public void addPhoneNumber(String newPhoneNumber) {

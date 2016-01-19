@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -12,12 +12,6 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.bootstrap;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-
-import java.util.*;
-
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.authentication.manager.ExternalGroupAuthorizationEvent;
 import org.cloudfoundry.identity.uaa.rest.jdbc.DefaultLimitSqlAdapter;
@@ -29,10 +23,9 @@ import org.cloudfoundry.identity.uaa.scim.endpoints.ScimUserEndpoints;
 import org.cloudfoundry.identity.uaa.scim.jdbc.JdbcScimGroupMembershipManager;
 import org.cloudfoundry.identity.uaa.scim.jdbc.JdbcScimGroupProvisioning;
 import org.cloudfoundry.identity.uaa.scim.jdbc.JdbcScimUserProvisioning;
-import org.cloudfoundry.identity.uaa.scim.validate.NullPasswordValidator;
 import org.cloudfoundry.identity.uaa.user.UaaUser;
-import org.cloudfoundry.identity.uaa.zone.IdentityProvider;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.flywaydb.core.Flyway;
 import org.hamcrest.collection.IsArrayContainingInAnyOrder;
 import org.junit.After;
 import org.junit.Before;
@@ -43,11 +36,22 @@ import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.AuthorityUtils;
-
-import com.googlecode.flyway.core.Flyway;
-
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Luke Taylor
@@ -67,7 +71,6 @@ public class ScimUserBootstrapTests {
     private Flyway flyway;
 
     private JdbcTemplate jdbcTemplate;
-    
 
     @Before
     public void setUp() {
@@ -81,7 +84,6 @@ public class ScimUserBootstrapTests {
         jdbcTemplate = new JdbcTemplate(database);
         JdbcPagingListFactory pagingListFactory = new JdbcPagingListFactory(jdbcTemplate, new DefaultLimitSqlAdapter());
         db = new JdbcScimUserProvisioning(jdbcTemplate, pagingListFactory);
-        db.setPasswordValidator(new NullPasswordValidator());
         gdb = new JdbcScimGroupProvisioning(jdbcTemplate, pagingListFactory);
         mdb = new JdbcScimGroupMembershipManager(jdbcTemplate, pagingListFactory);
         mdb.setScimUserProvisioning(db);
@@ -92,7 +94,7 @@ public class ScimUserBootstrapTests {
     }
 
     public static void addIdentityProvider(JdbcTemplate jdbcTemplate, String originKey) {
-        jdbcTemplate.update("insert into identity_provider (id,identity_zone_id,name,origin_key,type) values (?,'uaa',?,?,'UNKNOWN')",UUID.randomUUID().toString(),originKey,originKey);
+        jdbcTemplate.update("insert into identity_provider (id,identity_zone_id,name,origin_key,type) values (?,'uaa',?,?,'UNKNOWN')", UUID.randomUUID().toString(), originKey, originKey);
     }
 
     @After
@@ -230,6 +232,9 @@ public class ScimUserBootstrapTests {
         UaaUser joe = new UaaUser("joe", "password", "joe@test.org", "Joe", "User");
         ScimUserBootstrap bootstrap = new ScimUserBootstrap(db, gdb, mdb, Arrays.asList(joe));
         bootstrap.afterPropertiesSet();
+
+        String passwordHash = jdbcTemplate.queryForObject("select password from users where username='joe'",new Object[0], String.class);
+
         joe = new UaaUser("joe", "new", "joe@test.org", "Joe", "Bloggs");
         bootstrap = new ScimUserBootstrap(db, gdb, mdb, Arrays.asList(joe));
         bootstrap.setOverride(true);
@@ -237,6 +242,11 @@ public class ScimUserBootstrapTests {
         Collection<ScimUser> users = db.retrieveAll();
         assertEquals(1, users.size());
         assertEquals("Bloggs", users.iterator().next().getFamilyName());
+        assertNotEquals(passwordHash, jdbcTemplate.queryForObject("select password from users where username='joe'", new Object[0], String.class));
+
+        passwordHash = jdbcTemplate.queryForObject("select password from users where username='joe'",new Object[0], String.class);
+        bootstrap.afterPropertiesSet();
+        assertEquals(passwordHash, jdbcTemplate.queryForObject("select password from users where username='joe'", new Object[0], String.class));
     }
 
     @Test
@@ -272,12 +282,12 @@ public class ScimUserBootstrapTests {
         UaaUser user = getUaaUser(userAuthorities, origin, email, firstName, lastName, password, externalId, userId, username);
         ScimUserBootstrap bootstrap = new ScimUserBootstrap(db, gdb, mdb, Arrays.asList(user));
         bootstrap.afterPropertiesSet();
-        
+
         List<ScimUser> users = db.query("userName eq \""+username +"\" and origin eq \""+origin+"\"");
         assertEquals(1, users.size());
         userId = users.get(0).getId();
         user = getUaaUser(userAuthorities, origin, email, firstName, lastName, password, externalId, userId, username);
-        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, getAuthorities(externalAuthorities),add));
+        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, false, getAuthorities(externalAuthorities),add));
 
         users = db.query("userName eq \""+username +"\" and origin eq \""+origin+"\"");
         assertEquals(1, users.size());
@@ -285,7 +295,7 @@ public class ScimUserBootstrapTests {
         validateAuthoritiesCreated(add?externalAuthorities:new String[0], userAuthorities, origin, created);
 
         externalAuthorities = new String[] {"extTest1","extTest2"};
-        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, getAuthorities(externalAuthorities),add));
+        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, false, getAuthorities(externalAuthorities),add));
         validateAuthoritiesCreated(add?externalAuthorities:new String[0], userAuthorities, origin, created);
     }
 
@@ -334,7 +344,7 @@ public class ScimUserBootstrapTests {
         userId = users.get(0).getId();
         user = getUaaUser(userAuthorities, origin, newEmail, firstName, lastName, password, externalId, userId, username);
 
-        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, getAuthorities(externalAuthorities),true));
+        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, true, getAuthorities(externalAuthorities),true));
         users = db.query("userName eq \""+username +"\" and origin eq \""+origin+"\"");
         assertEquals(1, users.size());
         ScimUser created = users.get(0);
@@ -342,7 +352,15 @@ public class ScimUserBootstrapTests {
         assertEquals(newEmail, created.getPrimaryEmail());
 
         user = user.modifyEmail("test123@test.org");
-        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, getAuthorities(externalAuthorities),true));
+        //Ensure email doesn't get updated if event instructs not to update.
+        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, false, getAuthorities(externalAuthorities),true));
+        users = db.query("userName eq \""+username +"\" and origin eq \""+origin+"\"");
+        assertEquals(1, users.size());
+        created = users.get(0);
+        validateAuthoritiesCreated(externalAuthorities, userAuthorities, origin, created);
+        assertEquals(newEmail, created.getPrimaryEmail());
+
+        bootstrap.onApplicationEvent(new ExternalGroupAuthorizationEvent(user, true, getAuthorities(externalAuthorities),true));
         users = db.query("userName eq \""+username +"\" and origin eq \""+origin+"\"");
         assertEquals(1, users.size());
         created = users.get(0);
@@ -365,7 +383,9 @@ public class ScimUserBootstrapTests {
             origin,
             externalId,
             false,
-            IdentityZoneHolder.get().getId()
+            IdentityZoneHolder.get().getId(),
+            userId,
+            new Date()
         );
     }
 
@@ -383,12 +403,12 @@ public class ScimUserBootstrapTests {
         UaaUser user = getUaaUser(new String[0], origin, email, firstName, lastName, password, externalId, userId, username);
         ScimUserBootstrap bootstrap = new ScimUserBootstrap(db, gdb, mdb, Arrays.asList(user));
         bootstrap.afterPropertiesSet();
-        user = user.modifySource("newOrigin","");
+
         addIdentityProvider(jdbcTemplate,"newOrigin");
-        bootstrap.addUser(user);
+        bootstrap = new ScimUserBootstrap(db, gdb, mdb, Arrays.asList(user, user.modifySource("newOrigin","")));
+        bootstrap.afterPropertiesSet();
         assertEquals(2, db.retrieveAll().size());
     }
-
 
     private List<GrantedAuthority> getAuthorities(String[] auth) {
         ArrayList<GrantedAuthority> result = new ArrayList<>();
@@ -416,5 +436,5 @@ public class ScimUserBootstrapTests {
         }
         return result;
     }
-    
+
 }

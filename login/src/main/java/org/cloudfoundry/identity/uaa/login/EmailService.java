@@ -18,7 +18,7 @@ import java.io.UnsupportedEncodingException;
 public class EmailService implements MessageService {
     private final Log logger = LogFactory.getLog(getClass());
 
-    private final JavaMailSender mailSender;
+    private JavaMailSender mailSender;
     private final String loginUrl;
     private final String brand;
 
@@ -26,6 +26,14 @@ public class EmailService implements MessageService {
         this.mailSender = mailSender;
         this.loginUrl = loginUrl;
         this.brand = brand;
+    }
+
+    public JavaMailSender getMailSender() {
+        return mailSender;
+    }
+
+    public void setMailSender(JavaMailSender mailSender) {
+        this.mailSender = mailSender;
     }
 
     private Address[] getSenderAddresses() throws AddressException, UnsupportedEncodingException {
@@ -40,7 +48,7 @@ public class EmailService implements MessageService {
     }
 
     @Override
-    public void sendMessage(String userId, String email, MessageType messageType, String subject, String htmlContent) {
+    public void sendMessage(String email, MessageType messageType, String subject, String htmlContent) {
         MimeMessage message = mailSender.createMimeMessage();
         try {
             message.addFrom(getSenderAddresses());

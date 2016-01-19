@@ -12,24 +12,6 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.scim.jdbc;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.rest.SimpleAttributeNameMapper;
 import org.cloudfoundry.identity.uaa.rest.jdbc.JdbcPagingListFactory;
@@ -59,6 +41,25 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.bcrypt.BCrypt;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class JdbcScimUserProvisioningTests extends JdbcTestBase {
 
@@ -83,6 +84,8 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
     private int existingUserCount = 0;
 
     private String defaultIdentityProviderId;
+
+    private RandomValueStringGenerator generator = new RandomValueStringGenerator();
 
     @Before
     public void initJdbcScimUserProvisioningTests() throws Exception {
@@ -116,7 +119,7 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
                          String familyName, String phoneNumber, String identityProviderId, String identityZoneId) {
         TestUtils.assertNoSuchUser(jdbcTemplate, "id", id);
         jdbcTemplate.execute(String.format(ADD_USER_SQL_FORMAT, id, username, password, email, givenName, familyName,
-                phoneNumber, identityZoneId));
+            phoneNumber, identityZoneId));
     }
 
     private void removeUser(String id) {
@@ -159,6 +162,25 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
         assertNull(created.getGroups());
         assertEquals(Origin.UAA, created.getOrigin());
         assertEquals("uaa", map.get("identity_zone_id"));
+        assertNull(user.getPasswordLastModified());
+        assertNotNull(created.getPasswordLastModified());
+        assertEquals((created.getMeta().getCreated().getTime() / 1000l) * 1000l, created.getPasswordLastModified().getTime());
+    }
+
+    @Test
+    public void canModifyPassword() throws Exception {
+        ScimUser user = new ScimUser(null, generator.generate()+ "@foo.com", "Jo", "User");
+        user.addEmail(user.getUserName());
+        ScimUser created = db.createUser(user, "j7hyqpassX");
+        assertNull(user.getPasswordLastModified());
+        assertNotNull(created.getPasswordLastModified());
+        assertEquals((created.getMeta().getCreated().getTime() / 1000l) * 1000l, created.getPasswordLastModified().getTime());
+        Thread.sleep(10);
+        db.changePassword(created.getId(), "j7hyqpassX", "j7hyqpassXXX");
+
+        user = db.retrieve(created.getId());
+        assertNotNull(user.getPasswordLastModified());
+        assertEquals((user.getMeta().getLastModified().getTime() / 1000l) * 1000l, user.getPasswordLastModified().getTime());
     }
 
     @Test
@@ -267,6 +289,7 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
         ScimUser jo = new ScimUser(null, "josephine", "Jo", "NewUser");
         jo.addEmail("jo@blah.com");
         jo.setUserType(UaaAuthority.UAA_ADMIN.getUserType());
+        jo.setSalt("salt");
 
         ScimUser joe = db.update(JOE_ID, jo);
 
@@ -278,6 +301,7 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
         assertEquals(1, joe.getVersion());
         assertEquals(JOE_ID, joe.getId());
         assertNull(joe.getGroups());
+        assertEquals("salt", joe.getSalt());
     }
 
     @Test
@@ -370,11 +394,6 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
     @Test(expected = ScimResourceNotFoundException.class)
     public void cannotChangePasswordIfOldPasswordDoesntMatch() {
         db.changePassword("9999", null, "newpassword");
-    }
-
-    @Test(expected = InvalidPasswordException.class)
-    public void cannotChangePasswordToNewInvalidPassword() {
-        db.changePassword(JOE_ID, "joespassword", "koala123$");
     }
 
     @Test
@@ -483,6 +502,49 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
         }
     }
 
+
+    @Test
+    public void testCreateUserCheckSalt() throws Exception {
+        ScimUser scimUser = new ScimUser("user-id-3", "user3@example.com", "User", "Example");
+        ScimUser.Email email = new ScimUser.Email();
+        email.setValue("user@example.com");
+        scimUser.setEmails(Arrays.asList(email));
+        scimUser.setPassword("password");
+        scimUser.setSalt("salt");
+        scimUser = db.create(scimUser);
+        assertNotNull(scimUser);
+        assertEquals("salt", scimUser.getSalt());
+        scimUser.setSalt("newsalt");
+        scimUser = db.update(scimUser.getId(), scimUser);
+        assertNotNull(scimUser);
+        assertEquals("newsalt", scimUser.getSalt());
+    }
+
+    @Test
+    public void testUpdateUserPasswordDoesntChange() throws Exception {
+        String username = "user-"+new RandomValueStringGenerator().generate()+"@test.org";
+        ScimUser scimUser = new ScimUser(null, username, "User", "Example");
+        ScimUser.Email email = new ScimUser.Email();
+        email.setValue(username);
+        scimUser.setEmails(Arrays.asList(email));
+        scimUser.setSalt("salt");
+        scimUser = db.createUser(scimUser, "password");
+        assertNotNull(scimUser);
+        assertEquals("salt", scimUser.getSalt());
+        scimUser.setSalt("newsalt");
+
+        String passwordHash = jdbcTemplate.queryForObject("select password from users where id=?",new Object[] {scimUser.getId()}, String.class);
+        assertNotNull(passwordHash);
+
+        db.changePassword(scimUser.getId(), null, "password");
+        assertEquals(passwordHash, jdbcTemplate.queryForObject("select password from users where id=?", new Object[]{scimUser.getId()}, String.class));
+
+        db.changePassword(scimUser.getId(), "password", "password");
+        assertEquals(passwordHash, jdbcTemplate.queryForObject("select password from users where id=?",new Object[] {scimUser.getId()}, String.class));
+
+    }
+
+
     @Test
     public void testCreateUserWithDuplicateUsernameInOtherIdp() throws Exception {
         addUser("cba09242-aa43-4247-9aa0-b5c75c281f94", "user@example.com", "password", "user@example.com", "first", "user", "90438", defaultIdentityProviderId, "uaa");
@@ -515,17 +577,18 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
     @Test
     public void createUserWithNoZoneDefaultsToUAAZone() {
         String id = UUID.randomUUID().toString();
-        jdbcTemplate.execute(String.format(OLD_ADD_USER_SQL_FORMAT, id, "test-username", "password", "test@email.com", "givenName", "familyName","1234567890"));
+        jdbcTemplate.execute(String.format(OLD_ADD_USER_SQL_FORMAT, id, "test-username", "password", "test@email.com", "givenName", "familyName", "1234567890"));
         ScimUser user = db.retrieve(id);
         assertEquals("uaa", user.getZoneId());
+        assertNull(user.getSalt());
     }
-    
+
     @Test(expected=DuplicateKeyException.class)
     public void createUserWithNoZoneFailsIfUserAlreadyExistsInUaaZone() {
-        addUser(UUID.randomUUID().toString(), "test-username", "password", "test@email.com", "givenName", "familyName","1234567890",defaultIdentityProviderId,"uaa");
-        jdbcTemplate.execute(String.format(OLD_ADD_USER_SQL_FORMAT, UUID.randomUUID().toString(), "test-username", "password", "test@email.com", "givenName", "familyName","1234567890"));
+        addUser(UUID.randomUUID().toString(), "test-username", "password", "test@email.com", "givenName", "familyName", "1234567890", defaultIdentityProviderId, "uaa");
+        jdbcTemplate.execute(String.format(OLD_ADD_USER_SQL_FORMAT, UUID.randomUUID().toString(), "test-username", "password", "test@email.com", "givenName", "familyName", "1234567890"));
     }
-    
+
     @Test
     public void testUpdatedVersionedUserVerified() {
         String tmpUserIdString = createUserForDelete();
@@ -776,6 +839,16 @@ public class JdbcScimUserProvisioningTests extends JdbcTestBase {
     @Test(expected = IllegalArgumentException.class)
     public void filterEqWithoutQuotesIsRejected() {
         db.query("username eq joe");
+    }
+
+    @Test
+    public void checkPasswordMatches_returnsTrue_PasswordMatches() {
+        assertTrue(db.checkPasswordMatches(JOE_ID, "joespassword"));
+    }
+
+    @Test
+    public void checkPasswordMatches_ReturnsFalse_newPasswordSameAsOld() {
+        assertFalse(db.checkPasswordMatches(JOE_ID, "notjoepassword"));
     }
 
     private void assertJoe(ScimUser joe) {

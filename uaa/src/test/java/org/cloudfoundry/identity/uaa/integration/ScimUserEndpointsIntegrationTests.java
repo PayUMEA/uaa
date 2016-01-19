@@ -12,24 +12,11 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.integration;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
 import org.cloudfoundry.identity.uaa.ServerRunning;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.test.TestAccountSetup;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
-import org.codehaus.jackson.map.ObjectMapper;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
@@ -45,6 +32,19 @@ import org.springframework.security.oauth2.client.test.OAuth2ContextConfiguratio
 import org.springframework.security.oauth2.client.test.OAuth2ContextSetup;
 import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
 import org.springframework.web.client.RestTemplate;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * @author Luke Taylor
@@ -95,7 +95,6 @@ public class ScimUserEndpointsIntegrationTests {
             public void handleError(ClientHttpResponse response) throws IOException {
             }
         });
-
     }
 
     @SuppressWarnings("rawtypes")
@@ -293,9 +292,8 @@ public class ScimUserEndpointsIntegrationTests {
         ScimUser joe = created.getBody();
         HttpHeaders headers = new HttpHeaders();
         headers.add("If-Match", "\"" + joe.getVersion() + "\"");
-        ObjectMapper mapper = new ObjectMapper();
-        Map<String, Object> map = new HashMap<String, Object>(mapper.readValue(mapper.writeValueAsString(joe),
-                        Map.class));
+        Map<String, Object> map = new HashMap<String, Object>(JsonUtils.readValue(JsonUtils.writeValueAsString(joe),
+            Map.class));
         map.put("nottheusername", JOE + "0");
         ResponseEntity<Map> response = client.exchange(serverRunning.getUrl(userEndpoint) + "/{id}", HttpMethod.PUT,
             new HttpEntity<Map>(map, headers), Map.class, joe.getId());
@@ -313,8 +311,7 @@ public class ScimUserEndpointsIntegrationTests {
         ScimUser joe = created.getBody();
         HttpHeaders headers = new HttpHeaders();
         headers.add("If-Match", "\"" + joe.getVersion() + "\"");
-        ObjectMapper mapper = new ObjectMapper();
-        Map<String, Object> map = new HashMap<String, Object>(mapper.readValue(mapper.writeValueAsString(joe),
+        Map<String, Object> map = new HashMap<String, Object>(JsonUtils.readValue(JsonUtils.writeValueAsString(joe),
                         Map.class));
         map.put("username", JOE + "0");
         map.remove("userName");

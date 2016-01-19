@@ -47,7 +47,10 @@ public class UaaConfiguration {
     @Pattern(regexp = "(default|postgresql|hsqldb|mysql|oracle)")
     public String platform;
     public String spring_profiles;
-    public String internalHostnames;
+
+    @Valid
+    public Zones zones;
+
     @URL(message = "issuer.uri must be a valid URL")
     public String issuerUri;
     public boolean dump_requests;
@@ -91,6 +94,21 @@ public class UaaConfiguration {
     public String LOGIN_SECRET;
     @Valid
     public OAuth multitenant;
+    @Valid
+    public String corsXhrAllowedHeaders;
+    @Valid
+    public String corsXhrAllowedOrigins;
+    @Valid
+    public String corsXhrAllowedUris;
+
+    public static class Zones {
+        @Valid
+        public InternalZone internal;
+
+        public static class InternalZone {
+            public Set<String> hostnames;
+        }
+    }
 
     public static class CloudController {
         @Valid
@@ -105,6 +123,14 @@ public class UaaConfiguration {
         public String username;
         @NotNull(message = "Database password is required")
         public String password;
+
+        public int maxactive;
+        public int maxidle;
+        public boolean removeabandoned;
+        public boolean logabandoned;
+        public int abandonedtimeout;
+        public long evictionintervalms;
+
     }
 
     public static class Logging {
@@ -207,6 +233,10 @@ public class UaaConfiguration {
             addPropertyAlias("access-token-validity", OAuthClient.class, "accessTokenValidity");
             addPropertyAlias("refresh-token-validity", OAuthClient.class, "refreshTokenValidity");
             addPropertyAlias("user.override", Scim.class, "userOverride");
+
+            addPropertyAlias("cors.xhr.allowed.headers", UaaConfiguration.class, "corsXhrAllowedHeaders");
+            addPropertyAlias("cors.xhr.allowed.origins", UaaConfiguration.class, "corsXhrAllowedOrigins");
+            addPropertyAlias("cors.xhr.allowed.uris", UaaConfiguration.class, "corsXhrAllowedUris");
         }
 
         @Override

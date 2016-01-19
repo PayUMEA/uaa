@@ -8,7 +8,6 @@ import org.cloudfoundry.identity.uaa.codestore.ExpiringCodeStore;
 import org.cloudfoundry.identity.uaa.rest.QueryableResourceManager;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.ScimUserProvisioning;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -52,7 +51,7 @@ public class ChangeEmailEndpointsTest extends TestClassNullifier {
         expiringCodeStore = Mockito.mock(ExpiringCodeStore.class);
         publisher = Mockito.mock(ApplicationEventPublisher.class);
         clientDetailsService = Mockito.mock(QueryableResourceManager.class);
-        ChangeEmailEndpoints changeEmailEndpoints = new ChangeEmailEndpoints(scimUserProvisioning, expiringCodeStore, new ObjectMapper(), clientDetailsService);
+        ChangeEmailEndpoints changeEmailEndpoints = new ChangeEmailEndpoints(scimUserProvisioning, expiringCodeStore, clientDetailsService);
         changeEmailEndpoints.setApplicationEventPublisher(publisher);
         mockMvc = MockMvcBuilders.standaloneSetup(changeEmailEndpoints).build();
     }
@@ -64,6 +63,7 @@ public class ChangeEmailEndpointsTest extends TestClassNullifier {
             .thenReturn(new ExpiringCode("secret_code", new Timestamp(System.currentTimeMillis() + 1000), data));
 
         ScimUser userChangingEmail = new ScimUser("user-id-001", "user@example.com", null, null);
+        userChangingEmail.setOrigin("test");
         userChangingEmail.setPrimaryEmail("user@example.com");
         Mockito.when(scimUserProvisioning.retrieve("user-id-001")).thenReturn(userChangingEmail);
 

@@ -16,8 +16,8 @@ import org.cloudfoundry.identity.uaa.TestClassNullifier;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
 import org.cloudfoundry.identity.uaa.error.UaaException;
 import org.cloudfoundry.identity.uaa.login.test.ThymeleafConfig;
+import org.cloudfoundry.identity.uaa.scim.exception.InvalidPasswordException;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -40,6 +40,7 @@ import org.springframework.web.servlet.config.annotation.DefaultServletHandlerCo
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter;
 
+import static com.google.common.collect.Lists.newArrayList;
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -48,6 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.xpath;
 
 @RunWith(SpringJUnit4ClassRunner.class)
 @WebAppConfiguration
@@ -74,12 +76,16 @@ public class AccountsControllerTest extends TestClassNullifier {
     public void tearDown() throws Exception {
         SecurityContextHolder.clearContext();
     }
+
     @Test
     public void testNewAccountPage() throws Exception {
-        mockMvc.perform(get("/create_account").param("client_id", "app"))
+        mockMvc.perform(get("/create_account").param("client_id", "client-id").param("redirect_uri", "http://example.com/redirect"))
                 .andExpect(status().isOk())
-                .andExpect(model().attribute("client_id", "app"))
-                .andExpect(view().name("accounts/new_activation_email"));
+                .andExpect(model().attribute("client_id", "client-id"))
+                .andExpect(model().attribute("redirect_uri", "http://example.com/redirect"))
+                .andExpect(view().name("accounts/new_activation_email"))
+                .andExpect(xpath("//*[@type='hidden' and @value='client-id']").exists())
+                .andExpect(xpath("//*[@type='hidden' and @value='http://example.com/redirect']").exists());
     }
 
     @Test
@@ -88,18 +94,19 @@ public class AccountsControllerTest extends TestClassNullifier {
             .param("email", "user1@example.com")
             .param("password", "password")
             .param("password_confirmation", "password")
-            .param("client_id", "app");
+            .param("client_id", "app")
+            .param("redirect_uri", "http://example.com/redirect");
 
         mockMvc.perform(post)
             .andExpect(status().isFound())
             .andExpect(redirectedUrl("accounts/email_sent"));
 
-        Mockito.verify(accountCreationService).beginActivation("user1@example.com", "password", "app");
+        Mockito.verify(accountCreationService).beginActivation("user1@example.com", "password", "app", "http://example.com/redirect");
     }
 
     @Test
     public void testSendActivationEmailWithUserNameConflict() throws Exception {
-        doThrow(new UaaException("username already exists", 409)).when(accountCreationService).beginActivation("user1@example.com", "password", "app");
+        doThrow(new UaaException("username already exists", 409)).when(accountCreationService).beginActivation("user1@example.com", "password", "app", null);
 
         MockHttpServletRequestBuilder post = post("/create_account.do")
             .param("email", "user1@example.com")
@@ -112,7 +119,23 @@ public class AccountsControllerTest extends TestClassNullifier {
             .andExpect(view().name("accounts/new_activation_email"))
             .andExpect(model().attribute("error_message_code", "username_exists"));
 
-        Mockito.verify(accountCreationService).beginActivation("user1@example.com", "password", "app");
+        Mockito.verify(accountCreationService).beginActivation("user1@example.com", "password", "app", null);
+    }
+
+    @Test
+    public void testInvalidPassword() throws Exception {
+        doThrow(new InvalidPasswordException(newArrayList("Msg 2", "Msg 1"))).when(accountCreationService).beginActivation("user1@example.com", "password", "app", null);
+
+        MockHttpServletRequestBuilder post = post("/create_account.do")
+                .param("email", "user1@example.com")
+                .param("password", "password")
+                .param("password_confirmation", "password")
+                .param("client_id", "app");
+
+        mockMvc.perform(post)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(view().name("accounts/new_activation_email"))
+                .andExpect(model().attribute("error_message", "Msg 1 Msg 2"));
     }
 
     @Test

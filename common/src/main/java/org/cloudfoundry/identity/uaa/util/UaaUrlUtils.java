@@ -18,8 +18,12 @@ import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import javax.servlet.http.HttpServletRequest;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.Collection;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 public class UaaUrlUtils {
 
@@ -50,6 +54,16 @@ public class UaaUrlUtils {
         return builder;
     }
 
+    public static String findMatchingRedirectUri(Collection<String> wildcardUris, String requestedRedirectUri) {
+        if (wildcardUris != null) {
+            Set<Pattern> wildcards = UaaStringUtils.constructWildcards(wildcardUris);
+            if (UaaStringUtils.matches(wildcards, requestedRedirectUri)) {
+                return requestedRedirectUri;
+            }
+        }
+        return null;
+    }
+
     public static String getHostForURI(String uri) {
         UriComponentsBuilder b = UriComponentsBuilder.fromHttpUrl(uri);
         return b.build().getHost();
@@ -76,6 +90,22 @@ public class UaaUrlUtils {
             subdomain += ".";
         }
         return subdomain.trim();
+    }
+
+    public static String extractPathVariableFromUrl(int pathParameterIndex, String pathInfo) {
+        if (pathInfo.startsWith("/")) {
+            pathInfo = pathInfo.substring(1);
+        }
+        String[] paths = StringUtils.delimitedListToStringArray(pathInfo, "/");
+        if (paths.length!=0 && pathParameterIndex<paths.length) {
+            return paths[pathParameterIndex];
+        }
+        return null;
+    }
+
+    public static String getRequestPath(HttpServletRequest request) {
+        String pathInfo = StringUtils.hasLength(request.getRequestURI()) ? request.getRequestURI() : request.getPathInfo();
+        return pathInfo;
     }
 
 

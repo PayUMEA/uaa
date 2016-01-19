@@ -108,13 +108,7 @@ public class SecurityFilterChainPostProcessor implements BeanPostProcessor {
 
             SecurityFilterChain fc = (SecurityFilterChain) bean;
 
-            Filter uaaFilter;
-
-            if (requireHttps) {
-                uaaFilter = new HttpsEnforcementFilter(beanName, redirectToHttps.contains(beanName));
-            } else {
-                uaaFilter = new UaaLoggingFilter(beanName);
-            }
+            Filter uaaFilter = new HttpsEnforcementFilter(beanName, redirectToHttps.contains(beanName));
             fc.getFilters().add(0, uaaFilter);
             if (additionalFilters != null) {
                 for (Entry<FilterPosition, Filter> entry : additionalFilters.entrySet()) {
@@ -143,6 +137,10 @@ public class SecurityFilterChainPostProcessor implements BeanPostProcessor {
         this.requireHttps = requireHttps;
     }
 
+    public boolean isRequireHttps() {
+        return requireHttps;
+    }
+
     /**
      * Debugging feature. If enabled, and debug logging is enabled
      */
@@ -167,7 +165,7 @@ public class SecurityFilterChainPostProcessor implements BeanPostProcessor {
     /**
      * Additional filters to add to the chain after either HttpsEnforcementFilter or UaaLoggingFilter
      * has been added to the head of the chain. Filters will be inserted in Map iteration order,
-     * at the position given by the entry key (or the end of the chain if the key > size).
+     * at the position given by the entry key (or the end of the chain if the key &gt; size).
      * @param additionalFilters
      */
     public void setAdditionalFilters(Map<FilterPosition,Filter> additionalFilters) {
@@ -189,7 +187,7 @@ public class SecurityFilterChainPostProcessor implements BeanPostProcessor {
             HttpServletRequest request = (HttpServletRequest) req;
             HttpServletResponse response = (HttpServletResponse) res;
 
-            if (request.isSecure()) {
+            if (request.isSecure() || (!requireHttps)) {
                 // Ok. Just pass on.
                 if (redirect) {
                     // Set HSTS header for browser clients

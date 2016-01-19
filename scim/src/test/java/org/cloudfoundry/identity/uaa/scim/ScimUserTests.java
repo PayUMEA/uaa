@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -23,6 +23,7 @@ import static org.junit.Assert.fail;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -30,7 +31,7 @@ import java.util.Set;
 
 import org.cloudfoundry.identity.uaa.oauth.approval.Approval;
 import org.cloudfoundry.identity.uaa.scim.ScimUser.Group;
-import org.codehaus.jackson.map.ObjectMapper;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
@@ -40,9 +41,14 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
  * @author Luke Taylor
  */
 public class ScimUserTests {
-    ObjectMapper mapper = new ObjectMapper();
 
     private static final String SCHEMAS = "\"schemas\": [\"urn:scim:schemas:core:1.0\"],";
+
+    @Test
+    public void testDeserializeNullPasswordLastModified() {
+        String json = "{\"id\":\"78df8903-58e9-4a1e-8e22-b0421f7d6d70\",\"meta\":{\"version\":0,\"created\":\"2015-08-21T15:09:26.830Z\",\"lastModified\":\"2015-08-21T15:09:26.830Z\"},\"userName\":\"jo!!!@foo.com\",\"name\":{\"familyName\":\"User\",\"givenName\":\"Jo\"},\"emails\":[{\"value\":\"jo!!!@foo.com\",\"primary\":false}],\"active\":true,\"verified\":false,\"origin\":\"uaa\",\"zoneId\":\"uaa\",\"passwordLastModified\":null,\"schemas\":[\"urn:scim:schemas:core:1.0\"]}";
+        JsonUtils.readValue(json, ScimUser.class);
+    }
 
     @Test
     public void minimalJsonMapsToUser() throws Exception {
@@ -50,7 +56,7 @@ public class ScimUserTests {
                         "  \"userName\": \"bjensen@example.com\"\n" +
                         "}";
 
-        ScimUser user = mapper.readValue(minimal, ScimUser.class);
+        ScimUser user = JsonUtils.readValue(minimal, ScimUser.class);
         assertEquals("bjensen@example.com", user.getUserName());
         assertEquals(null, user.getPassword());
     }
@@ -62,7 +68,7 @@ public class ScimUserTests {
                         "  \"password\": \"foo\"\n" +
                         "}";
 
-        ScimUser user = mapper.readValue(minimal, ScimUser.class);
+        ScimUser user = JsonUtils.readValue(minimal, ScimUser.class);
         assertEquals("foo", user.getPassword());
     }
 
@@ -73,7 +79,7 @@ public class ScimUserTests {
         user.setUserName("joe");
         user.getMeta().setCreated(new SimpleDateFormat("yyyy-MM-dd").parse("2011-11-30"));
 
-        String json = mapper.writeValueAsString(user);
+        String json = JsonUtils.writeValueAsString(user);
         // System.err.println(json);
         assertTrue(json.contains("\"userName\":\"joe\""));
         assertTrue(json.contains("\"id\":\"123\""));
@@ -93,7 +99,7 @@ public class ScimUserTests {
         user.addEmail("joe@test.org");
         user.addPhoneNumber("+1-222-1234567");
 
-        String json = mapper.writeValueAsString(user);
+        String json = JsonUtils.writeValueAsString(user);
         // System.err.println(json);
         assertTrue(json.contains("\"emails\":"));
         assertTrue(json.contains("\"phoneNumbers\":"));
@@ -107,7 +113,7 @@ public class ScimUserTests {
         user.setUserName("joe");
         user.setGroups(Collections.singleton(new Group(null, "foo")));
 
-        String json = mapper.writeValueAsString(user);
+        String json = JsonUtils.writeValueAsString(user);
         // System.err.println(json);
         assertTrue(json.contains("\"groups\":"));
     }
@@ -121,7 +127,7 @@ public class ScimUserTests {
                         "{\"value\": \"babs@jensen.org\",\"type\": \"home\"}" +
                         "],\n" +
                         "\"schemas\":[\"urn:scim:schemas:core:1.0\"]}";
-        ScimUser user = mapper.readValue(json, ScimUser.class);
+        ScimUser user = JsonUtils.readValue(json, ScimUser.class);
         assertEquals(3, user.getEmails().size());
         assertEquals("bjensen@example.com", user.getEmails().get(1).getValue());
         assertEquals("babs@jensen.org", user.getEmails().get(2).getValue());
@@ -138,7 +144,7 @@ public class ScimUserTests {
                         "{\"value\": \"123456\",\"display\": \"dash.admin\"}" +
                         "],\n" +
                         "\"schemas\":[\"urn:scim:schemas:core:1.0\"]}";
-        ScimUser user = mapper.readValue(json, ScimUser.class);
+        ScimUser user = JsonUtils.readValue(json, ScimUser.class);
         assertEquals(2, user.getGroups().size());
         // System.out.println(mapper.writeValueAsString(user));
     }
@@ -147,7 +153,7 @@ public class ScimUserTests {
     public void datesAreMappedCorrectly() throws Exception {
         String json = "{ \"userName\":\"bjensen\"," +
                         "\"meta\":{\"version\":10,\"created\":\"2011-11-30T10:46:16.475Z\"}}";
-        ScimUser user = mapper.readValue(json, ScimUser.class);
+        ScimUser user = JsonUtils.readValue(json, ScimUser.class);
         assertEquals(10, user.getVersion());
         assertEquals("2011-11-30", new SimpleDateFormat("yyyy-MM-dd").format(user.getMeta().getCreated()));
         // System.out.println(mapper.writeValueAsString(user));
@@ -188,7 +194,7 @@ public class ScimUserTests {
         roz.setPhoneNumbers(phoneNumbers);
         assertNotNull(roz.getPhoneNumbers());
         assertEquals(1, roz.getPhoneNumbers().size());
-        
+
         assertNull(roz.getDisplayName());
         roz.setDisplayName("DisplayName");
         assertEquals("DisplayName", roz.getDisplayName());
@@ -408,6 +414,20 @@ public class ScimUserTests {
         }catch (IllegalArgumentException x) {
 
         }
+
+    }
+
+    @Test
+    public void testPasswordLastModified() throws Exception {
+        ScimUser user = new ScimUser();
+        assertNull(user.getPasswordLastModified());
+        user.setId("someid");
+        assertSame(user.getMeta().getCreated(), user.getPasswordLastModified());
+
+        Date d = new Date(System.currentTimeMillis());
+        user.setPasswordLastModified(d);
+        assertNotNull(user.getPasswordLastModified());
+        assertSame(d, user.getPasswordLastModified());
 
     }
 }

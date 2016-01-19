@@ -12,7 +12,6 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.mock.ldap;
 
-import com.googlecode.flyway.core.Flyway;
 import org.cloudfoundry.identity.uaa.TestClassNullifier;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
 import org.cloudfoundry.identity.uaa.authentication.manager.AuthzAuthenticationManager;
@@ -39,6 +38,7 @@ import org.cloudfoundry.identity.uaa.zone.IdentityProviderValidationRequest.User
 import org.cloudfoundry.identity.uaa.zone.IdentityZone;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneSwitchingFilter;
+import org.flywaydb.core.Flyway;
 import org.hamcrest.core.StringContains;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -75,6 +75,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import static org.cloudfoundry.identity.uaa.mock.util.MockMvcUtils.CookieCsrfPostProcessor.cookieCsrf;
 import static org.hamcrest.Matchers.arrayContainingInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.Assert.assertEquals;
@@ -263,7 +264,6 @@ public class LdapMockMvcTests extends TestClassNullifier {
             .header(IdentityZoneSwitchingFilter.HEADER, zone.getId());
 
         MvcResult result = mockMvc.perform(post)
-            .andDo(print())
             .andExpect(status().isOk())
             .andReturn();
 
@@ -466,6 +466,7 @@ public class LdapMockMvcTests extends TestClassNullifier {
 
         //IDP not yet created
         mockMvc.perform(post("/login.do").accept(TEXT_HTML_VALUE)
+            .with(cookieCsrf())
             .with(new SetServerNameRequestPostProcessor(zone.getSubdomain()+".localhost"))
             .param("username", "marissa2")
             .param("password", "ldap"))
@@ -499,6 +500,7 @@ public class LdapMockMvcTests extends TestClassNullifier {
         provider = MockMvcUtils.utils().createIdpUsingWebRequest(mockMvc, zone.getId(), zoneAdminToken, provider, status().isCreated());
 
         mockMvc.perform(post("/login.do").accept(TEXT_HTML_VALUE)
+            .with(cookieCsrf())
             .with(new SetServerNameRequestPostProcessor(zone.getSubdomain()+".localhost"))
             .param("username", "marissa2")
             .param("password", "ldap"))
@@ -515,6 +517,7 @@ public class LdapMockMvcTests extends TestClassNullifier {
         provider.setActive(false);
         MockMvcUtils.utils().createIdpUsingWebRequest(mockMvc, zone.getId(), zoneAdminToken, provider, status().isOk(), true);
         mockMvc.perform(post("/login.do").accept(TEXT_HTML_VALUE)
+            .with(cookieCsrf())
             .with(new SetServerNameRequestPostProcessor(zone.getSubdomain()+".localhost"))
             .param("username", "marissa2")
             .param("password", "ldap"))
@@ -543,7 +546,8 @@ public class LdapMockMvcTests extends TestClassNullifier {
         MockMvcUtils.utils().createIdpUsingWebRequest(mockMvc, zone.getId(), zoneAdminToken, provider, status().isOk(), true);
 
         mockMvc.perform(post("/login.do").accept(TEXT_HTML_VALUE)
-            .with(new SetServerNameRequestPostProcessor(zone.getSubdomain()+".localhost"))
+            .with(cookieCsrf())
+            .with(new SetServerNameRequestPostProcessor(zone.getSubdomain() + ".localhost"))
             .param("username", "marissa2")
             .param("password", "ldap"))
             .andExpect(status().isFound())
@@ -611,17 +615,18 @@ public class LdapMockMvcTests extends TestClassNullifier {
                 .andExpect(model().attributeDoesNotExist("saml"));
 
         mockMvc.perform(post("/login.do").accept(TEXT_HTML_VALUE)
-                        .param("username", "marissa")
-                        .param("password", "koaladsada"))
-                .andExpect(status().isFound())
-                .andExpect(redirectedUrl("/login?error=login_failure"));
+            .with(cookieCsrf())
+            .param("username", "marissa")
+            .param("password", "koaladsada"))
+            .andExpect(status().isFound())
+            .andExpect(redirectedUrl("/login?error=login_failure"));
 
         mockMvc.perform(post("/login.do").accept(TEXT_HTML_VALUE)
-                        .param("username", "marissa2")
-                        .param("password", "ldap"))
-            .andDo(print())
-                .andExpect(status().isFound())
-                .andExpect(redirectedUrl("/"));
+            .with(cookieCsrf())
+            .param("username", "marissa2")
+            .param("password", "ldap"))
+            .andExpect(status().isFound())
+            .andExpect(redirectedUrl("/"));
     }
 
     public void testAuthenticate() throws Exception {

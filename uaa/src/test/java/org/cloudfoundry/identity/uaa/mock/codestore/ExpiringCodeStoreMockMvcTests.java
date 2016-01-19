@@ -12,23 +12,17 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.mock.codestore;
 
-import com.googlecode.flyway.core.Flyway;
-import org.cloudfoundry.identity.uaa.TestClassNullifier;
 import org.cloudfoundry.identity.uaa.codestore.ExpiringCode;
+import org.cloudfoundry.identity.uaa.codestore.JdbcExpiringCodeStore;
+import org.cloudfoundry.identity.uaa.mock.InjectedMockContextTest;
 import org.cloudfoundry.identity.uaa.test.TestClient;
-import org.cloudfoundry.identity.uaa.test.YamlServletProfileInitializerContextInitializer;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
+import org.junit.Before;
 import org.junit.Test;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockServletContext;
-import org.springframework.security.web.FilterChainProxy;
-import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.support.XmlWebApplicationContext;
 
 import java.sql.Timestamp;
 
@@ -39,33 +33,16 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
+public class ExpiringCodeStoreMockMvcTests extends InjectedMockContextTest {
 
-    private static XmlWebApplicationContext webApplicationContext;
-    private static MockMvc mockMvc;
-    private static TestClient testClient;
-    private static String loginToken;
+    private TestClient testClient;
+    private String loginToken;
 
-    @BeforeClass
-    public static void setUp() throws Exception {
-        webApplicationContext = new XmlWebApplicationContext();
-        webApplicationContext.setServletContext(new MockServletContext());
-        new YamlServletProfileInitializerContextInitializer().initializeContext(webApplicationContext, "uaa.yml,login.yml");
-        webApplicationContext.setConfigLocation("file:./src/main/webapp/WEB-INF/spring-servlet.xml");
-        webApplicationContext.refresh();
-        FilterChainProxy springSecurityFilterChain = (FilterChainProxy)webApplicationContext.getBean("org.springframework.security.filterChainProxy");
-
-        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilter(springSecurityFilterChain)
-                        .build();
-        testClient = new TestClient(mockMvc);
+    @Before
+    public void setUp() throws Exception {
+        testClient = new TestClient(getMockMvc());
         loginToken = testClient.getClientCredentialsOAuthAccessToken("login", "loginsecret", null);
-    }
-
-    @AfterClass
-    public static void tearDown() throws Exception {
-        Flyway flyway = webApplicationContext.getBean(Flyway.class);
-        flyway.clean();
-        webApplicationContext.close();
+        getWebApplicationContext().getBean(JdbcTemplate.class).update("DELETE FROM expiring_code_store ");
     }
 
     @Test
@@ -73,14 +50,14 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
         Timestamp ts = new Timestamp(System.currentTimeMillis() + 60000);
         ExpiringCode code = new ExpiringCode(null, ts, "{}");
 
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
                         .andExpect(status().isCreated())
                         .andExpect(jsonPath("$.code").exists())
                         .andExpect(jsonPath("$.expiresAt").value(ts.getTime()))
@@ -92,17 +69,17 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
     public void testGenerateCodeWithInvalidScope() throws Exception {
         Timestamp ts = new Timestamp(System.currentTimeMillis() + 60000);
         ExpiringCode code = new ExpiringCode(null, ts, "{}");
-        TestClient testClient = new TestClient(mockMvc);
+        TestClient testClient = new TestClient(getMockMvc());
         String loginToken = testClient.getClientCredentialsOAuthAccessToken("admin", "adminsecret", "scim.read");
 
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
                         .andExpect(status().isForbidden());
     }
 
@@ -111,13 +88,13 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
         Timestamp ts = new Timestamp(System.currentTimeMillis() + 60000);
         ExpiringCode code = new ExpiringCode(null, ts, "{}");
 
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
                         .andExpect(status().isUnauthorized());
     }
 
@@ -125,14 +102,14 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
     public void testGenerateCodeWithNullData() throws Exception {
         Timestamp ts = new Timestamp(System.currentTimeMillis() + 60000);
         ExpiringCode code = new ExpiringCode(null, ts, null);
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
                         .andExpect(status().isBadRequest());
 
     }
@@ -140,14 +117,14 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
     @Test
     public void testGenerateCodeWithNullExpiresAt() throws Exception {
         ExpiringCode code = new ExpiringCode(null, null, "{}");
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
                         .andExpect(status().isBadRequest());
 
     }
@@ -156,14 +133,14 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
     public void testGenerateCodeWithExpiresAtInThePast() throws Exception {
         Timestamp ts = new Timestamp(System.currentTimeMillis() - 60000);
         ExpiringCode code = new ExpiringCode(null, ts, null);
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        mockMvc.perform(post)
+        getMockMvc().perform(post)
                         .andExpect(status().isBadRequest());
 
     }
@@ -172,28 +149,28 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
     public void testRetrieveCode() throws Exception {
         Timestamp ts = new Timestamp(System.currentTimeMillis() + 60000);
         ExpiringCode code = new ExpiringCode(null, ts, "{}");
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        MvcResult result = mockMvc.perform(post)
+        MvcResult result = getMockMvc().perform(post)
                         .andExpect(status().isCreated())
                         .andReturn();
 
-        ExpiringCode rc = new ObjectMapper().readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
+        ExpiringCode rc = JsonUtils.readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
 
         MockHttpServletRequestBuilder get = get("/Codes/" + rc.getCode())
                         .header("Authorization", "Bearer " + loginToken)
                         .accept(MediaType.APPLICATION_JSON);
 
-        result = mockMvc.perform(get)
+        result = getMockMvc().perform(get)
                         .andExpect(status().isOk())
                         .andReturn();
 
-        ExpiringCode rc1 = new ObjectMapper().readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
+        ExpiringCode rc1 = JsonUtils.readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
 
         assertEquals(rc, rc1);
     }
@@ -202,26 +179,108 @@ public class ExpiringCodeStoreMockMvcTests extends TestClassNullifier {
     public void testRetrieveCodeThatIsExpired() throws Exception {
         Timestamp ts = new Timestamp(System.currentTimeMillis() + 1000);
         ExpiringCode code = new ExpiringCode(null, ts, "{}");
-        String requestBody = new ObjectMapper().writeValueAsString(code);
+        String requestBody = JsonUtils.writeValueAsString(code);
         MockHttpServletRequestBuilder post = post("/Codes")
                         .header("Authorization", "Bearer " + loginToken)
                         .contentType(APPLICATION_JSON)
                         .accept(MediaType.APPLICATION_JSON)
                         .content(requestBody);
 
-        MvcResult result = mockMvc.perform(post)
+        MvcResult result = getMockMvc().perform(post)
                         .andExpect(status().isCreated())
                         .andReturn();
 
-        ExpiringCode rc = new ObjectMapper().readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
-        Thread.sleep(1001);
+        ExpiringCode rc = JsonUtils.readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
+        expireAllCodes();
         MockHttpServletRequestBuilder get = get("/Codes/" + rc.getCode())
                         .header("Authorization", "Bearer " + loginToken)
                         .accept(MediaType.APPLICATION_JSON);
 
-        result = mockMvc.perform(get)
+        result = getMockMvc().perform(get)
                         .andExpect(status().isNotFound())
                         .andReturn();
+    }
+
+    @Test
+    public void testCodeThatIsExpiredIsDeletedOnCreateOfNewCode() throws Exception {
+        Timestamp ts = new Timestamp(System.currentTimeMillis() + 1000);
+        ExpiringCode code = new ExpiringCode(null, ts, "{}");
+        String requestBody = JsonUtils.writeValueAsString(code);
+        MockHttpServletRequestBuilder post = post("/Codes")
+            .header("Authorization", "Bearer " + loginToken)
+            .contentType(APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON)
+            .content(requestBody);
+
+        MvcResult result = getMockMvc().perform(post)
+            .andExpect(status().isCreated())
+            .andReturn();
+
+        ExpiringCode rc = JsonUtils.readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
+
+        expireAllCodes();
+
+        ts = new Timestamp(System.currentTimeMillis() + 1000);
+        code = new ExpiringCode(null, ts, "{}");
+        requestBody = JsonUtils.writeValueAsString(code);
+        post = post("/Codes")
+            .header("Authorization", "Bearer " + loginToken)
+            .contentType(APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON)
+            .content(requestBody);
+
+        getMockMvc().perform(post)
+            .andExpect(status().isCreated())
+            .andReturn();
+
+        assertEquals(1, getWebApplicationContext().getBean(JdbcTemplate.class).queryForInt("select count(*) from expiring_code_store"));
+    }
+
+
+    @Test
+    public void testCodeThatIsExpirationIntervalWorks() throws Exception {
+        Timestamp ts = new Timestamp(System.currentTimeMillis() + 1000);
+        ExpiringCode code = new ExpiringCode(null, ts, "{}");
+        String requestBody = JsonUtils.writeValueAsString(code);
+        MockHttpServletRequestBuilder post = post("/Codes")
+            .header("Authorization", "Bearer " + loginToken)
+            .contentType(APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON)
+            .content(requestBody);
+
+        MvcResult result = getMockMvc().perform(post)
+            .andExpect(status().isCreated())
+            .andReturn();
+
+        ExpiringCode rc = JsonUtils.readValue(result.getResponse().getContentAsString(), ExpiringCode.class);
+
+        expireAllCodes();
+        long interval = getWebApplicationContext().getBean(JdbcExpiringCodeStore.class).getExpirationInterval();
+        try {
+            getWebApplicationContext().getBean(JdbcExpiringCodeStore.class).setExpirationInterval(10000000);
+            ts = new Timestamp(System.currentTimeMillis() + 1000);
+            code = new ExpiringCode(null, ts, "{}");
+            requestBody = JsonUtils.writeValueAsString(code);
+            post = post("/Codes")
+                .header("Authorization", "Bearer " + loginToken)
+                .contentType(APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .content(requestBody);
+
+            getMockMvc().perform(post)
+                .andExpect(status().isCreated())
+                .andReturn();
+
+            assertEquals(2, getWebApplicationContext().getBean(JdbcTemplate.class).queryForInt("select count(*) from expiring_code_store"));
+        }finally {
+            getWebApplicationContext().getBean(JdbcExpiringCodeStore.class).setExpirationInterval(interval);
+        }
+    }
+
+    protected void expireAllCodes() throws Exception {
+        getWebApplicationContext().getBean(JdbcExpiringCodeStore.class).setExpirationInterval(0);
+        Timestamp expired = new Timestamp(System.currentTimeMillis() - 5000);
+        getWebApplicationContext().getBean(JdbcTemplate.class).update("update expiring_code_store set expiresat=?", expired.getTime());
     }
 
 }

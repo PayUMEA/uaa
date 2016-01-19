@@ -12,16 +12,17 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.util.json;
 
+import com.fasterxml.jackson.core.JsonLocation;
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+
 import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-
-import org.codehaus.jackson.JsonParseException;
-import org.codehaus.jackson.JsonParser;
-import org.codehaus.jackson.JsonProcessingException;
-import org.codehaus.jackson.map.DeserializationContext;
-import org.codehaus.jackson.map.JsonDeserializer;
 
 /**
  * JSON deserializer for Jackson to handle regular date instances as timestamps
@@ -35,12 +36,15 @@ public class JsonDateDeserializer extends JsonDeserializer<Date> {
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
 
     @Override
-    public Date deserialize(JsonParser parser, DeserializationContext context) throws IOException,
-                    JsonProcessingException {
+    public Date deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+        return getDate(parser.getText(), parser.getCurrentLocation());
+    }
+
+    public static Date getDate(String text, JsonLocation loc) throws IOException {
         try {
-            return dateFormat.parse(parser.getText());
+            return dateFormat.parse(text);
         } catch (ParseException e) {
-            throw new JsonParseException("Could not parse date", parser.getCurrentLocation(), e);
+            throw new JsonParseException("Could not parse date:"+ text, loc, e);
         }
     }
 

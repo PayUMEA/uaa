@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -36,6 +36,8 @@ public class JdbcExpiringCodeStore implements ExpiringCodeStore {
     public static final String delete = "delete from " + tableName + " where code = ?";
     public static final String deleteExpired = "delete from " + tableName + " where expiresat < ?";
     public static final String select = "select " + fields + " from " + tableName + " where code = ?";
+    public static final String SELECT_BY_EMAIL_AND_CLIENT_ID = "select " + fields + " from " + tableName +
+            " where data like '%%\"email\":\"%s\"%%' and data like '%%\"client_id\":\"%s\"%%' ORDER BY expiresat DESC LIMIT 1";
 
     private Log logger = LogFactory.getLog(getClass());
 
@@ -68,6 +70,8 @@ public class JdbcExpiringCodeStore implements ExpiringCodeStore {
 
     @Override
     public ExpiringCode generateCode(String data, Timestamp expiresAt) {
+        cleanExpiredEntries();
+
         if (data == null || expiresAt == null) {
             throw new NullPointerException();
         }
@@ -126,6 +130,27 @@ public class JdbcExpiringCodeStore implements ExpiringCodeStore {
     @Override
     public void setGenerator(RandomValueStringGenerator generator) {
         this.generator = generator;
+    }
+
+    @Override
+    public ExpiringCode retrieveLatest(String email, String clientId) {
+        cleanExpiredEntries();
+        try {
+            String query = String.format(SELECT_BY_EMAIL_AND_CLIENT_ID, email, clientId);
+            ExpiringCode expiringCode = jdbcTemplate.queryForObject(query, new JdbcExpiringCodeMapper());
+            try {
+                if (expiringCode != null) {
+                    jdbcTemplate.update(delete, expiringCode.getCode());
+                }
+                if (expiringCode.getExpiresAt().getTime() < System.currentTimeMillis()) {
+                    expiringCode = null;
+                }
+            } finally {
+                return expiringCode;
+            }
+        } catch (EmptyResultDataAccessException x) {
+            return null;
+        }
     }
 
     public int cleanExpiredEntries() {

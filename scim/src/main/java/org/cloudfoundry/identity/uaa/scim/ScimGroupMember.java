@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -15,16 +15,16 @@ package org.cloudfoundry.identity.uaa.scim;
 import java.util.Arrays;
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
-import org.codehaus.jackson.annotate.JsonIgnore;
-import org.codehaus.jackson.annotate.JsonProperty;
-import org.codehaus.jackson.map.annotate.JsonSerialize;
 
-@JsonSerialize(include = JsonSerialize.Inclusion.NON_NULL)
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class ScimGroupMember {
 
-    @JsonSerialize(include = JsonSerialize.Inclusion.NON_NULL)
-    public static enum Role {
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public enum Role {
         MEMBER, READER, WRITER;
     }
 
@@ -36,7 +36,7 @@ public class ScimGroupMember {
 
     private String origin = Origin.UAA;
 
-    @JsonSerialize(include = JsonSerialize.Inclusion.NON_NULL)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public enum Type {
         USER, GROUP
     }
@@ -72,7 +72,7 @@ public class ScimGroupMember {
 
     @Override
     public String toString() {
-        return String.format("(memberId: %s, type: %s, roles: %s)", memberId, type, roles);
+        return String.format("(memberId: %s, type: %s, roles: %s, origin:%s)", getMemberId(), getType(), getRoles(), getOrigin());
     }
 
     public String getOrigin() {
@@ -92,20 +92,16 @@ public class ScimGroupMember {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
 
-        ScimGroupMember that = (ScimGroupMember) o;
-
-        if (!memberId.equals(that.memberId)) return false;
-        if (!origin.equals(that.origin)) return false;
-        if (type != that.type) return false;
-
-        return true;
+        ScimGroupMember member = (ScimGroupMember) o;
+        if (getMemberId() != null ? !getMemberId().equals(member.getMemberId()) : member.getMemberId() != null) return false;
+        return getType() == member.getType();
     }
 
     @Override
     public int hashCode() {
-        int result = memberId.hashCode();
-        result = 31 * result + origin.hashCode();
-        result = 31 * result + type.hashCode();
+        int result = getMemberId() != null ? getMemberId().hashCode() : 0;
+        result = 31 * result + (getOrigin() != null ? getOrigin().hashCode() : 0);
+        result = 31 * result + (getType() != null ? getType().hashCode() : 0);
         return result;
     }
 
@@ -115,6 +111,7 @@ public class ScimGroupMember {
     public ScimGroupMember(String memberId) {
         this(memberId, Type.USER, GROUP_MEMBER);
     }
+
 
     public ScimGroupMember(String memberId, Type type, List<Role> roles) {
         this.memberId = memberId;

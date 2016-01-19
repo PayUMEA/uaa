@@ -1,6 +1,6 @@
 <beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.springframework.org/schema/beans"
        xmlns:aop="http://www.springframework.org/schema/aop"
-       xsi:schemaLocation="http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security-3.2.xsd
+       xsi:schemaLocation="http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security-4.0.xsd
        http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
        http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop-4.0.xsd">
 
@@ -35,14 +35,18 @@
         <constructor-arg ref="identityProviderProvisioning"/>
         <constructor-arg name="scimGroupExternalMembershipManager" ref="externalGroupMembershipManager"/>
         <constructor-arg name="scimGroupProvisioning" ref="scimGroupProvisioning"/>
+        <constructor-arg ref="metaDataProviders"/>
     </bean>
 
     <http name="identityZoneSecurity" pattern="/identity-zones/**" create-session="stateless"
           entry-point-ref="oauthAuthenticationEntryPoint"
           use-expressions="true" authentication-manager-ref="emptyAuthenticationManager"
           xmlns="http://www.springframework.org/schema/security">
-        <intercept-url pattern="/**"
+        <intercept-url pattern="/identity-zones/"
                        access="#oauth2.hasScopeInAuthZone('zones.read') or #oauth2.hasScopeInAuthZone('zones.{zone.id}.admin')"
+                       method="GET"/>
+        <intercept-url pattern="/identity-zones/*"
+                       access="#oauth2.hasScopeInAuthZone('zones.read') or #oauth2.hasScopeInAuthZone('zones.{zone.id}.admin') or #oauth2.hasScopeInAuthZone('zones.{zone.id}.read')"
                        method="GET"/>
         <intercept-url pattern="/**"
                        access="#oauth2.hasScopeInAuthZone('zones.write') or #oauth2.hasScopeInAuthZone('zones.{zone.id}.admin')"
@@ -57,6 +61,7 @@
         <custom-filter ref="resourceAgnosticAuthenticationFilter" before="PRE_AUTH_FILTER"/>
         <access-denied-handler ref="oauthAccessDeniedHandler"/>
         <expression-handler ref="oauthWebExpressionHandler"/>
+        <csrf disabled="true"/>
     </http>
 
 
@@ -115,6 +120,7 @@
                        method="GET"/>
         <custom-filter ref="resourceAgnosticAuthenticationFilter" before="PRE_AUTH_FILTER"/>
         <expression-handler ref="oauthWebExpressionHandler"/>
+        <csrf disabled="true"/>
     </http>
 
     <bean id="idpEventPublisher" class="org.cloudfoundry.identity.uaa.zone.event.IdentityProviderEventPublisher"/>

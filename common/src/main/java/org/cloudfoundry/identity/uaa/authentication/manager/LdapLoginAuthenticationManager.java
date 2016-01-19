@@ -48,7 +48,9 @@ public class LdapLoginAuthenticationManager extends ExternalLoginAuthenticationM
                 origin,
                 externalId,
                 false,
-                IdentityZoneHolder.get().getId());
+                IdentityZoneHolder.get().getId(),
+                null,
+                null);
         } else {
             logger.warn("Unable to get DN from user. Not an LDAP user:"+details+" of class:"+details.getClass());
             return user.modifySource(getOrigin(), user.getExternalId());
@@ -68,15 +70,17 @@ public class LdapLoginAuthenticationManager extends ExternalLoginAuthenticationM
 
     @Override
     protected UaaUser userAuthenticated(Authentication request, UaaUser user) {
+        boolean userModified = false;
         //we must check and see if the email address has changed between authentications
         if (request.getPrincipal() !=null && request.getPrincipal() instanceof ExtendedLdapUserDetails) {
             ExtendedLdapUserDetails details = (ExtendedLdapUserDetails)request.getPrincipal();
             UaaUser fromRequest = getUser(details, getExtendedAuthorizationInfo(request));
             if (fromRequest.getEmail()!=null && !fromRequest.getEmail().equals(user.getEmail())) {
                 user = user.modifyEmail(fromRequest.getEmail());
+                userModified = true;
             }
         }
-        ExternalGroupAuthorizationEvent event = new ExternalGroupAuthorizationEvent(user, request.getAuthorities(), isAutoAddAuthorities());
+        ExternalGroupAuthorizationEvent event = new ExternalGroupAuthorizationEvent(user, userModified, request.getAuthorities(), isAutoAddAuthorities());
         publish(event);
         return getUserDatabase().retrieveUserById(user.getId());
     }

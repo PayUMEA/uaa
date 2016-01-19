@@ -23,14 +23,14 @@ import org.cloudfoundry.identity.uaa.codestore.ExpiringCodeStore;
 import org.cloudfoundry.identity.uaa.login.AutologinRequest;
 import org.cloudfoundry.identity.uaa.login.AutologinResponse;
 import org.cloudfoundry.identity.uaa.login.PasscodeInformation;
-import org.cloudfoundry.identity.uaa.login.saml.IdentityProviderConfigurator;
-import org.cloudfoundry.identity.uaa.login.saml.IdentityProviderDefinition;
 import org.cloudfoundry.identity.uaa.login.saml.LoginSamlAuthenticationToken;
+import org.cloudfoundry.identity.uaa.login.saml.SamlIdentityProviderConfigurator;
+import org.cloudfoundry.identity.uaa.login.saml.SamlIdentityProviderDefinition;
+import org.cloudfoundry.identity.uaa.login.saml.SamlRedirectUtils;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
+import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.util.UaaStringUtils;
-import org.cloudfoundry.identity.uaa.util.UaaUrlUtils;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.springframework.core.env.Environment;
 import org.springframework.core.io.support.PropertiesLoaderUtils;
 import org.springframework.http.HttpStatus;
@@ -40,6 +40,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.codec.Base64;
 import org.springframework.security.oauth2.provider.ClientDetails;
 import org.springframework.security.oauth2.provider.ClientDetailsService;
+import org.springframework.security.oauth2.provider.NoSuchClientException;
 import org.springframework.security.web.savedrequest.SavedRequest;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -50,10 +51,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletRequestWrapper;
 import javax.servlet.http.HttpSession;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -98,7 +97,7 @@ public class LoginInfoEndpoint {
 
     protected Environment environment;
 
-    private IdentityProviderConfigurator idpDefinitions;
+    private SamlIdentityProviderConfigurator idpDefinitions;
 
     private long codeExpirationMillis = 5 * 60 * 1000;
 
@@ -119,7 +118,7 @@ public class LoginInfoEndpoint {
         this.codeExpirationMillis = codeExpirationMillis;
     }
 
-    public void setIdpDefinitions(IdentityProviderConfigurator idpDefinitions) {
+    public void setIdpDefinitions(SamlIdentityProviderConfigurator idpDefinitions) {
         this.idpDefinitions = idpDefinitions;
     }
 
@@ -155,8 +154,10 @@ public class LoginInfoEndpoint {
         }
     }
 
-    private List<Prompt> prompts = Arrays.asList(new Prompt("username", "text", "Email"), new Prompt("password",
-                    "password", "Password"));
+    private List<Prompt> prompts = Arrays.asList(
+        new Prompt("username", "text", "Email"),
+        new Prompt("password", "password", "Password")
+    );
 
     public void setPrompts(List<Prompt> prompts) {
         this.prompts = prompts;
@@ -186,12 +187,13 @@ public class LoginInfoEndpoint {
         return login(model, principal, Arrays.asList("passcode"), false, request);
     }
 
+    @RequestMapping(value = {"/invalid_request" })
+    public String invalidRequest(HttpServletRequest request) {
+        return "invalid_request";
+    }
+
     protected String getZonifiedEntityId() {
-        if (UaaUrlUtils.isUrl(entityID)) {
-            return UaaUrlUtils.addSubdomainToUrl(entityID);
-        } else {
-            return UaaUrlUtils.getSubdomain()+entityID;
-        }
+        return SamlRedirectUtils.getZonifiedEntityId(entityID);
     }
 
     private String login(Model model, Principal principal, List<String> excludedPrompts, boolean nonHtml) {
@@ -202,60 +204,77 @@ public class LoginInfoEndpoint {
         HttpSession session = request != null ? request.getSession(false) : null;
         List<String> allowedIdps = getAllowedIdps(session);
 
-        List<IdentityProviderDefinition> idps = getIdentityProviderDefinitions(allowedIdps);
+        List<SamlIdentityProviderDefinition> idps = getSamlIdentityProviderDefinitions(allowedIdps);
+
+        boolean fieldUsernameShow = true;
 
         if (allowedIdps==null ||
             allowedIdps.contains(Origin.LDAP) ||
             allowedIdps.contains(Origin.UAA) ||
             allowedIdps.contains(Origin.KEYSTONE)) {
-            model.addAttribute("fieldUsernameShow", true);
+            fieldUsernameShow = true;
         } else if (idps!=null && idps.size()==1) {
-            UriComponentsBuilder builder = UriComponentsBuilder.fromPath("saml/discovery");
-            builder.queryParam("returnIDParam", "idp");
-            builder.queryParam("entityID", getZonifiedEntityId());
-            builder.queryParam("idp", idps.get(0).getIdpEntityAlias());
-            builder.queryParam("isPassive", "true");
-            return "redirect:" + builder.build().toUriString();
+            String url = SamlRedirectUtils.getIdpRedirectUrl(idps.get(0), entityID);
+            return "redirect:" + url;
         } else {
-            model.addAttribute("fieldUsernameShow", false);
+            fieldUsernameShow = false;
         }
-        populatePrompts(model, excludedPrompts, nonHtml);
+        boolean linkCreateAccountShow = fieldUsernameShow;
+        if (fieldUsernameShow && (allowedIdps!=null && !allowedIdps.contains(Origin.UAA))) {
+            linkCreateAccountShow = false;
+        }
+        model.addAttribute("linkCreateAccountShow", linkCreateAccountShow);
+        model.addAttribute("fieldUsernameShow", fieldUsernameShow);
         setCommitInfo(model);
         model.addAttribute("zone_name", IdentityZoneHolder.get().getName());
         model.addAttribute("links", getLinksInfo());
 
+        boolean noSamlIdpsPresent = true;
         // Entity ID to start the discovery
         model.addAttribute("entityID", getZonifiedEntityId());
         model.addAttribute("idpDefinitions", idps);
-        for (IdentityProviderDefinition idp : idps) {
+        for (SamlIdentityProviderDefinition idp : idps) {
             if(idp.isShowSamlLink()) {
                 model.addAttribute("showSamlLoginLinks", true);
+                noSamlIdpsPresent = false;
                 break;
             }
         }
+        //make the list writeable
+        excludedPrompts = new LinkedList<>(excludedPrompts);
+        if (noSamlIdpsPresent) {
+            excludedPrompts.add("passcode");
+        }
+        populatePrompts(model, excludedPrompts, nonHtml);
 
         if (principal == null) {
             boolean selfServiceLinksEnabled = !"false".equalsIgnoreCase(environment.getProperty("login.selfServiceLinksEnabled"));
             if (selfServiceLinksEnabled && (!nonHtml)) {
-                String customSignupLink = environment.getProperty("links.signup");
-                String customPasswordLink = environment.getProperty("links.passwd");
-                if (StringUtils.hasText(customSignupLink)) {
-                    model.addAttribute("createAccountLink", customSignupLink);
-                } else {
+                if(!IdentityZoneHolder.isUaa()) {
                     model.addAttribute("createAccountLink", "/create_account");
-                }
-                if (StringUtils.hasText(customPasswordLink)) {
-                    model.addAttribute("forgotPasswordLink", customPasswordLink);
-                } else {
                     model.addAttribute("forgotPasswordLink", "/forgot_password");
+                } else {
+                    String customSignupLink = environment.getProperty("links.signup");
+                    String customPasswordLink = environment.getProperty("links.passwd");
+                    if (StringUtils.hasText(customSignupLink)) {
+                        model.addAttribute("createAccountLink", customSignupLink);
+                    } else {
+                        model.addAttribute("createAccountLink", "/create_account");
+                    }
+                    if (StringUtils.hasText(customPasswordLink)) {
+                        model.addAttribute("forgotPasswordLink", customPasswordLink);
+                    } else {
+                        model.addAttribute("forgotPasswordLink", "/forgot_password");
+                    }
                 }
+
             }
             return "login";
         }
         return "home";
     }
 
-    protected List<IdentityProviderDefinition> getIdentityProviderDefinitions(List<String> allowedIdps) {
+    protected List<SamlIdentityProviderDefinition> getSamlIdentityProviderDefinitions(List<String> allowedIdps) {
         return idpDefinitions.getIdentityProviderDefinitions(allowedIdps, IdentityZoneHolder.get());
     }
 
@@ -278,8 +297,12 @@ public class LoginInfoEndpoint {
         }
         SavedRequest savedRequest = (SavedRequest) session.getAttribute("SPRING_SECURITY_SAVED_REQUEST");
         String[] client_ids = savedRequest.getParameterValues("client_id");
-        ClientDetails clientDetails = clientDetailsService.loadClientByClientId(client_ids[0]);
-        return (List<String>) clientDetails.getAdditionalInformation().get(ClientConstants.ALLOWED_PROVIDERS);
+        try {
+            ClientDetails clientDetails = clientDetailsService.loadClientByClientId(client_ids[0]);
+            return (List<String>) clientDetails.getAdditionalInformation().get(ClientConstants.ALLOWED_PROVIDERS);
+        }catch (NoSuchClientException x) {
+            return null;
+        }
     }
 
     private void setCommitInfo(Model model) {
@@ -295,7 +318,7 @@ public class LoginInfoEndpoint {
     public void populatePrompts(Model model, List<String> exclude, boolean nonHtml) {
         Map<String, String[]> map = new LinkedHashMap<>();
         List<Map<String,String>> list = new LinkedList<>();
-        for (Prompt prompt : prompts) {
+        for (Prompt prompt : getPrompts()) {
             if (!exclude.contains(prompt.getName())) {
                 if (nonHtml) {
                     Map<String, String> promptmap = new LinkedHashMap<>();
@@ -400,7 +423,7 @@ public class LoginInfoEndpoint {
 
     protected ExpiringCode doGenerateCode(Object o) throws IOException {
         return expiringCodeStore.generateCode(
-            new ObjectMapper().writeValueAsString(o),
+            JsonUtils.writeValueAsString(o),
             new Timestamp(System.currentTimeMillis() + (getCodeExpirationMillis()))
         );
     }
