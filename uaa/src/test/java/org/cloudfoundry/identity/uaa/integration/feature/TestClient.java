@@ -1,6 +1,6 @@
 /*******************************************************************************
- *     Cloud Foundry 
- *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
+ *     Cloud Foundry
+ *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
  *     You may not use this product except in compliance with the License.
@@ -47,13 +47,16 @@ public class TestClient {
     }
 
     public String getOAuthAccessToken(String username, String password, String grantType, String scope) {
+        return getOAuthAccessToken(baseUrl, username, password, grantType, scope);
+    }
+    public String getOAuthAccessToken(String baseUrl, String username, String password, String grantType, String scope) {
         HttpHeaders headers = new HttpHeaders();
         headers.add("Authorization", getBasicAuthHeaderValue(username, password));
 
         MultiValueMap<String, String> postParameters = new LinkedMultiValueMap<String, String>();
         postParameters.add("grant_type", grantType);
         postParameters.add("client_id", username);
-        postParameters.add("scope", scope);
+        if(scope != null) { postParameters.add("scope", scope); }
 
         HttpEntity<MultiValueMap<String, String>> requestEntity = new HttpEntity<MultiValueMap<String, String>>(postParameters, headers);
 
@@ -79,6 +82,7 @@ public class TestClient {
                         "\"client_secret\":\"scimsecret\"," +
                         "\"resource_ids\":[\"oauth\"]," +
                         "\"authorized_grant_types\":[\"client_credentials\"]," +
+                        "\"redirect_uri\":[\"http://example.redirect.com\"]," +
                         "\"authorities\":[\"password.write\",\"scim.write\",\"scim.read\",\"oauth.approvals\"]" +
                         "}",
                 uaaUrl + "/oauth/clients"

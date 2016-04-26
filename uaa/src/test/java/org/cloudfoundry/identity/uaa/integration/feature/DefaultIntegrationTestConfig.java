@@ -1,6 +1,6 @@
 /*******************************************************************************
- *     Cloud Foundry 
- *     Copyright (c) [2009-2014] Pivotal Software, Inc. All Rights Reserved.
+ *     Cloud Foundry
+ *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
  *     You may not use this product except in compliance with the License.
@@ -15,6 +15,7 @@ package org.cloudfoundry.identity.uaa.integration.feature;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
 import org.openqa.selenium.Dimension;
 import org.openqa.selenium.phantomjs.PhantomJSDriver;
+import org.openqa.selenium.phantomjs.PhantomJSDriverService;
 import org.openqa.selenium.remote.DesiredCapabilities;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -50,10 +51,11 @@ public class DefaultIntegrationTestConfig {
     @Bean(destroyMethod = "quit")
     public PhantomJSDriver webDriver() {
         DesiredCapabilities desiredCapabilities = new DesiredCapabilities();
+        desiredCapabilities.setCapability(PhantomJSDriverService.PHANTOMJS_CLI_ARGS, new String[] {"--web-security=no", "--ignore-ssl-errors=yes"});
         PhantomJSDriver driver = new PhantomJSDriver(desiredCapabilities);
-        driver.manage().timeouts().implicitlyWait(5, TimeUnit.SECONDS);
-        driver.manage().timeouts().pageLoadTimeout(10, TimeUnit.SECONDS);
-        driver.manage().timeouts().setScriptTimeout(5, TimeUnit.SECONDS);
+        driver.manage().timeouts().implicitlyWait(15, TimeUnit.SECONDS);
+        driver.manage().timeouts().pageLoadTimeout(20, TimeUnit.SECONDS);
+        driver.manage().timeouts().setScriptTimeout(15, TimeUnit.SECONDS);
         driver.manage().window().setSize(new Dimension(1024, 768));
         return driver;
     }
@@ -74,7 +76,7 @@ public class DefaultIntegrationTestConfig {
                                  @Value("${integration.test.uaa_url}") String uaaUrl) {
         return new TestClient(restTemplate, baseUrl, uaaUrl);
     }
-    
+
     @Bean
     public TestAccounts testAccounts(@Value("${integration.test.uaa_url}") String uaaUrl) {
         //TODO - actually USE the URL?
